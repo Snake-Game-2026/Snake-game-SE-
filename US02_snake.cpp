@@ -1,9 +1,19 @@
-// US-02: Initialize Snake  (FR-2)
-// Snake at grid centre, length 3, heading RIGHT. Body stored head-first.
-// Build: g++ -std=c++17 US02_snake.cpp -o us02 && ./us02
+// US-02: Initialize Snake
+// Build: g++ -std=c++17 US02_snake.cpp -o us02 -lsfml-graphics -lsfml-window -lsfml-system
+// Self-test without a window: ./us02 --test
+
+#include <SFML/Graphics.hpp>
 #include <cassert>
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <string>
+#include <system_error>
+#include <vector>
 
 struct Position {
     int col = 0, row = 0;
@@ -11,6 +21,157 @@ struct Position {
 };
 enum class Direction { UP, DOWN, LEFT, RIGHT };
 
+// ===================== shared UI helpers (same look in every file) =====================
+namespace ui {
+constexpr int   COLS = 20, ROWS = 20, CELL = 24;
+constexpr int   WIN_W = 640, WIN_H = 620;
+constexpr float BOARD_X = (WIN_W - COLS * CELL) / 2.f;
+constexpr float BOARD_Y = 110.f;
+
+const sf::Color BG(13, 13, 18),        BOARD_BG(8, 8, 11);
+const sf::Color GRID_LINE(40, 40, 52), BORDER(78, 78, 98);
+const sf::Color CARD(22, 22, 30),      CARD_BORDER(52, 52, 68);
+const sf::Color OUTLINE(0, 0, 0);
+const sf::Color GREEN(106, 190, 48),   LIGHT(153, 229, 80);
+const sf::Color TEAL(55, 148, 110),    OLIVE(75, 105, 47);
+const sf::Color EYE(251, 242, 54),     TONGUE(172, 50, 50);
+const sf::Color MUTED(140, 140, 158),  GOLD(255, 215, 0);
+
+inline void rect(sf::RenderTarget& t, const sf::RenderStates& st, float x, float y,
+                 float w, float h, sf::Color c) {
+    sf::RectangleShape r({w, h});
+    r.setPosition(x, y);
+    r.setFillColor(c);
+    t.draw(r, st);
+}
+inline std::string argValue(int argc, char** argv, const std::string& key) {
+    for (int i = 1; i + 1 < argc; ++i) if (key == argv[i]) return argv[i + 1];
+    return "";
+}
+inline bool hasFlag(int argc, char** argv, const std::string& key) {
+    for (int i = 1; i < argc; ++i) if (key == argv[i]) return true;
+    return false;
+}
+inline void saveShot(sf::RenderWindow& w, const std::string& path) {
+    sf::Texture tex; tex.create(WIN_W, WIN_H); tex.update(w);
+    tex.copyToImage().saveToFile(path);
+}
+}  // namespace ui
+
+// ---------- board drawing (US-01 look) ----------
+namespace ui {
+inline void drawBoard(sf::RenderTarget& t) {
+    sf::RenderStates id;
+    rect(t, id, BOARD_X - 3, BOARD_Y - 3, COLS * CELL + 6, ROWS * CELL + 6, BORDER);
+    rect(t, id, BOARD_X - 1, BOARD_Y - 1, COLS * CELL + 2, ROWS * CELL + 2, BOARD_BG);
+    for (int i = 0; i <= COLS; ++i)
+        rect(t, id, BOARD_X + i * CELL - (i == COLS ? 1 : 0), BOARD_Y, 1, ROWS * CELL, GRID_LINE);
+    for (int j = 0; j <= ROWS; ++j)
+        rect(t, id, BOARD_X, BOARD_Y + j * CELL - (j == ROWS ? 1 : 0), COLS * CELL, 1, GRID_LINE);
+}
+}  // namespace ui
+
+// ---------- snake drawing (US-02 look) ----------
+namespace ui {
+inline void drawBodySegment(sf::RenderTarget& t, float x, float y, int idx, bool tail) {
+    sf::RenderStates id;
+    const float inset = tail ? 3.f : 1.f;
+    const float s = CELL - 2 * inset;
+    rect(t, id, x + inset, y + inset, s, s, OUTLINE);
+    rect(t, id, x + inset + 2, y + inset + 2, s - 4, s - 4, GREEN);
+    const float ix = x + inset + 2, iy = y + inset + 2, iw = s - 4, ih = s - 4;
+    switch (idx % 3) {
+        case 0: rect(t, id, ix, iy, iw, 4, LIGHT); break;
+        case 1: rect(t, id, ix, iy + ih / 2, iw, ih / 2, TEAL); break;
+        case 2: rect(t, id, ix + iw - 6, iy + ih - 6, 5, 5, OLIVE); break;
+    }
+}
+inline float angleOf(Direction d) {
+    switch (d) { case Direction::RIGHT: return 0.f;   case Direction::DOWN: return 90.f;
+                 case Direction::LEFT:  return 180.f; default:               return 270.f; }
+}
+inline void drawHead(sf::RenderTarget& t, float x, float y, Direction dir) {
+    sf::Transform tr;
+    tr.translate(x + CELL / 2.f, y + CELL / 2.f);
+    tr.rotate(angleOf(dir));
+    tr.translate(-CELL / 2.f, -CELL / 2.f);
+    sf::RenderStates st(tr);                      // local coords: facing right
+    rect(t, st, CELL, CELL / 2 - 1, 5, 2, TONGUE);
+    rect(t, st, CELL + 5, CELL / 2 - 3, 3, 2, TONGUE);
+    rect(t, st, CELL + 5, CELL / 2 + 1, 3, 2, TONGUE);
+    rect(t, st, 0, 0, CELL, CELL, OUTLINE);
+    rect(t, st, 2, 2, CELL - 4, CELL - 4, GREEN);
+    rect(t, st, 2, 2, CELL - 4, 4, LIGHT);
+    rect(t, st, 2, CELL - 6, CELL - 4, 4, TEAL);
+    rect(t, st, 12, 5, 6, 6, EYE);
+    rect(t, st, 12, CELL - 11, 6, 6, EYE);
+    rect(t, st, 15, 7, 3, 3, OUTLINE);
+    rect(t, st, 15, CELL - 9, 3, 3, OUTLINE);
+}
+inline void drawSnake(sf::RenderTarget& t, const std::deque<Position>& body, Direction dir) {
+    for (int i = (int)body.size() - 1; i >= 1; --i)
+        drawBodySegment(t, BOARD_X + body[i].col * CELL, BOARD_Y + body[i].row * CELL,
+                        i, i == (int)body.size() - 1);
+    if (!body.empty()) drawHead(t, BOARD_X + body[0].col * CELL, BOARD_Y + body[0].row * CELL, dir);
+}
+}  // namespace ui
+
+// ---------- HUD (US-07 look) ----------
+namespace ui {
+struct Hud {
+    sf::Font font;
+    bool load() {
+        const char* p[] = {"C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf",
+                           "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                           "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                           "/System/Library/Fonts/Supplemental/Arial.ttf"};
+        for (auto f : p) if (font.loadFromFile(f)) return true;
+        return false;
+    }
+    void text(sf::RenderTarget& t, const std::string& s, unsigned size, sf::Color c,
+              float x, float y, bool bold = false) {
+        sf::Text tx(s, font, size);
+        tx.setFillColor(c);
+        if (bold) tx.setStyle(sf::Text::Bold);
+        tx.setPosition(x, y);
+        t.draw(tx);
+    }
+    void centered(sf::RenderTarget& t, const std::string& s, unsigned size, sf::Color c,
+                  float y, bool bold = false) {
+        sf::Text tx(s, font, size);
+        tx.setFillColor(c);
+        if (bold) tx.setStyle(sf::Text::Bold);
+        tx.setPosition(WIN_W / 2.f - tx.getLocalBounds().width / 2.f, y);
+        t.draw(tx);
+    }
+    void card(sf::RenderTarget& t, float x, const std::string& label, int value, sf::Color c) {
+        sf::RenderStates id;
+        rect(t, id, x, 24, 115, 62, CARD_BORDER);
+        rect(t, id, x + 1, 25, 113, 60, CARD);
+        text(t, label, 11, MUTED, x + 14, 32);
+        text(t, std::to_string(value), 28, c, x + 14, 46, true);
+    }
+    // Title + subtitle on the left, SCORE and BEST cards on the right.
+    void draw(sf::RenderTarget& t, int score, int best, const std::string& subtitle) {
+        text(t, "SNAKE", 34, GREEN, BOARD_X, 28, true);
+        text(t, subtitle, 12, MUTED, BOARD_X + 2, 70);
+        card(t, 320, "SCORE", score, sf::Color::White);
+        card(t, 445, "BEST", best, GOLD);
+    }
+    // Muted key-hint line under the board.
+    void hint(sf::RenderTarget& t, const std::string& s) { centered(t, s, 12, MUTED, 596); }
+    // Dimmed panel over the board with a title and a line of detail.
+    void overlay(sf::RenderTarget& t, const std::string& title, const std::string& sub) {
+        sf::RenderStates id;
+        rect(t, id, BOARD_X, BOARD_Y, COLS * CELL, ROWS * CELL, sf::Color(0, 0, 0, 175));
+        centered(t, title, 38, sf::Color::White, 220, true);
+        centered(t, sub, 15, MUTED, 275);
+    }
+};
+}  // namespace ui
+
+// ===================== US-02: Initialize Snake (FR-2) =====================
+// Centre of grid, length 3, heading RIGHT. Body stored head-first.
 class Snake {
 public:
     static constexpr size_t INITIAL_LENGTH = 3;
@@ -20,7 +181,7 @@ public:
         heading_ = Direction::RIGHT;
         const int c = gridCols / 2, r = gridRows / 2;
         for (size_t i = 0; i < INITIAL_LENGTH; ++i)
-            body_.push_back({c - static_cast<int>(i), r});   // head first, tail to the left
+            body_.push_back({c - static_cast<int>(i), r});
     }
     const std::deque<Position>& body() const { return body_; }
     Position head() const { return body_.front(); }
@@ -32,7 +193,7 @@ private:
     Direction heading_ = Direction::RIGHT;
 };
 
-int main() {
+static void selfTest() {
     Snake s;
     s.init(20, 20);
     assert(s.length() == 3);
@@ -40,9 +201,36 @@ int main() {
     assert(s.head() == (Position{10, 10}));
     assert(s.body()[1] == (Position{9, 10}));
     assert(s.body()[2] == (Position{8, 10}));
-
-    s.init(15, 15);                                // re-init (used on restart)
+    s.init(15, 15);
     assert(s.head() == (Position{7, 7}) && s.length() == 3);
+    std::cout << "US-02 OK: snake length 3, heading right, at centre\n";
+}
 
-    std::cout << "US-02 OK: head at (" << s.head().col << "," << s.head().row << ")\n";
+int main(int argc, char** argv) {
+    if (ui::hasFlag(argc, argv, "--test")) { selfTest(); return 0; }
+    selfTest();
+
+    Snake snake;
+    snake.init(ui::COLS, ui::ROWS);
+    sf::RenderWindow window(sf::VideoMode(ui::WIN_W, ui::WIN_H), "US-02 Snake",
+                            sf::Style::Titlebar | sf::Style::Close);
+    window.setFramerateLimit(60);
+    ui::Hud hud;
+    if (!hud.load()) { std::cerr << "Error: could not load a font\n"; return 1; }
+    const std::string shot = ui::argValue(argc, argv, "--shot");
+
+    while (window.isOpen()) {
+        sf::Event e;
+        while (window.pollEvent(e)) {
+            if (e.type == sf::Event::Closed) window.close();
+            if (e.type == sf::Event::KeyPressed && e.key.code == sf::Keyboard::Escape) window.close();
+        }
+        window.clear(ui::BG);
+        hud.draw(window, 0, 0, "US-02  snake, length 3");
+        hud.hint(window, "Starts at the centre, heading right   |   Esc: quit");
+        ui::drawBoard(window);
+        ui::drawSnake(window, snake.body(), snake.heading());
+        window.display();
+        if (!shot.empty()) { ui::saveShot(window, shot); window.close(); }
+    }
 }
