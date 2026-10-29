@@ -1,0 +1,1815 @@
+// US-19 - Validate Portability and Architecture (NFR-6, NFR-7)  [GitHub #53, Todo]
+// Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
+// Build: g++ -std=c++17 US19_validate_portability_and_architecture.cpp -o US19_validate_portability_and_architecture -lsfml-graphics -lsfml-window -lsfml-system
+// Run:   ./US19_validate_portability_and_architecture              (self-test runs first, then the demo window)
+//        ./US19_validate_portability_and_architecture --test       (self-test only, no window)
+//        ./US19_validate_portability_and_architecture --shot x.png (save one frame as a screenshot and exit)
+// Contains US-01 .. US-09 (sprint 1) and US-10 .. US-19, so it compiles on its own.
+
+#ifdef NDEBUG
+#undef NDEBUG            // the self-tests use assert(); keep it active in every build type
+#endif
+#include <SFML/Graphics.hpp>
+#include <algorithm>
+#include <cassert>
+#include <cctype>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <ctime>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iomanip>
+#include <iostream>
+#include <optional>
+#include <random>
+#include <sstream>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+
+struct Position {
+    int col = 0, row = 0;
+    bool operator==(const Position& o) const { return col == o.col && row == o.row; }
+};
+enum class Direction { UP, DOWN, LEFT, RIGHT };
+
+// ===================== shared UI helpers (same look in every file, SFML 3) =====================
+namespace ui {
+constexpr int   COLS = 20, ROWS = 20, CELL = 24;
+constexpr int   WIN_W = 640, WIN_H = 620;
+constexpr float BOARD_X = (WIN_W - COLS * CELL) / 2.f;
+constexpr float BOARD_Y = 110.f;
+
+const sf::Color BG(13, 13, 18),        BOARD_BG(8, 8, 11);
+const sf::Color GRID_LINE(40, 40, 52), BORDER(78, 78, 98);
+const sf::Color CARD(22, 22, 30),      CARD_BORDER(52, 52, 68);
+const sf::Color OUTLINE(0, 0, 0);
+const sf::Color GREEN(106, 190, 48),   LIGHT(153, 229, 80);
+const sf::Color TEAL(55, 148, 110),    OLIVE(75, 105, 47);
+const sf::Color EYE(251, 242, 54),     TONGUE(172, 50, 50);
+const sf::Color MUTED(140, 140, 158),  GOLD(255, 215, 0);
+const sf::Color DANGER(230, 70, 70);
+
+inline void rect(sf::RenderTarget& t, const sf::RenderStates& st, float x, float y,
+                 float w, float h, sf::Color c) {
+    sf::RectangleShape r({w, h});
+    r.setPosition({x, y});
+    r.setFillColor(c);
+    t.draw(r, st);
+}
+inline std::string argValue(int argc, char** argv, const std::string& key) {
+    for (int i = 1; i + 1 < argc; ++i) if (key == argv[i]) return argv[i + 1];
+    return "";
+}
+inline bool hasFlag(int argc, char** argv, const std::string& key) {
+    for (int i = 1; i < argc; ++i) if (key == argv[i]) return true;
+    return false;
+}
+// --shot <file.png>: save one frame and quit (used for screenshots in reports)
+inline void saveShot(sf::RenderWindow& w, const std::string& path) {
+    sf::Texture tex(w.getSize());
+    tex.update(w);
+    (void)tex.copyToImage().saveToFile(path);
+}
+}  // namespace ui
+
+// ---------- board drawing (US-01 look) ----------
+namespace ui {
+inline void drawBoard(sf::RenderTarget& t) {
+    sf::RenderStates id;
+    rect(t, id, BOARD_X - 3, BOARD_Y - 3, COLS * CELL + 6, ROWS * CELL + 6, BORDER);
+    rect(t, id, BOARD_X - 1, BOARD_Y - 1, COLS * CELL + 2, ROWS * CELL + 2, BOARD_BG);
+    for (int i = 0; i <= COLS; ++i)
+        rect(t, id, BOARD_X + i * CELL - (i == COLS ? 1 : 0), BOARD_Y, 1, ROWS * CELL, GRID_LINE);
+    for (int j = 0; j <= ROWS; ++j)
+        rect(t, id, BOARD_X, BOARD_Y + j * CELL - (j == ROWS ? 1 : 0), COLS * CELL, 1, GRID_LINE);
+}
+}  // namespace ui
+
+// ---------- snake drawing (US-02 look) ----------
+namespace ui {
+inline void drawBodySegment(sf::RenderTarget& t, float x, float y, int idx, bool tail) {
+    sf::RenderStates id;
+    const float inset = tail ? 3.f : 1.f;
+    const float s = CELL - 2 * inset;
+    rect(t, id, x + inset, y + inset, s, s, OUTLINE);
+    rect(t, id, x + inset + 2, y + inset + 2, s - 4, s - 4, GREEN);
+    const float ix = x + inset + 2, iy = y + inset + 2, iw = s - 4, ih = s - 4;
+    switch (idx % 3) {
+        case 0: rect(t, id, ix, iy, iw, 4, LIGHT); break;
+        case 1: rect(t, id, ix, iy + ih / 2, iw, ih / 2, TEAL); break;
+        case 2: rect(t, id, ix + iw - 6, iy + ih - 6, 5, 5, OLIVE); break;
+    }
+}
+inline float angleOf(Direction d) {
+    switch (d) { case Direction::RIGHT: return 0.f;   case Direction::DOWN: return 90.f;
+                 case Direction::LEFT:  return 180.f; default:               return 270.f; }
+}
+inline void drawHead(sf::RenderTarget& t, float x, float y, Direction dir) {
+    sf::Transform tr;
+    tr.translate({x + CELL / 2.f, y + CELL / 2.f});
+    tr.rotate(sf::degrees(angleOf(dir)));
+    tr.translate({-CELL / 2.f, -CELL / 2.f});
+    sf::RenderStates st(tr);                      // local coords: facing right
+    rect(t, st, CELL, CELL / 2 - 1, 5, 2, TONGUE);
+    rect(t, st, CELL + 5, CELL / 2 - 3, 3, 2, TONGUE);
+    rect(t, st, CELL + 5, CELL / 2 + 1, 3, 2, TONGUE);
+    rect(t, st, 0, 0, CELL, CELL, OUTLINE);
+    rect(t, st, 2, 2, CELL - 4, CELL - 4, GREEN);
+    rect(t, st, 2, 2, CELL - 4, 4, LIGHT);
+    rect(t, st, 2, CELL - 6, CELL - 4, 4, TEAL);
+    rect(t, st, 12, 5, 6, 6, EYE);
+    rect(t, st, 12, CELL - 11, 6, 6, EYE);
+    rect(t, st, 15, 7, 3, 3, OUTLINE);
+    rect(t, st, 15, CELL - 9, 3, 3, OUTLINE);
+}
+inline void drawSnake(sf::RenderTarget& t, const std::deque<Position>& body, Direction dir) {
+    for (int i = (int)body.size() - 1; i >= 1; --i)
+        drawBodySegment(t, BOARD_X + body[i].col * CELL, BOARD_Y + body[i].row * CELL,
+                        i, i == (int)body.size() - 1);
+    if (!body.empty()) drawHead(t, BOARD_X + body[0].col * CELL, BOARD_Y + body[0].row * CELL, dir);
+}
+}  // namespace ui
+
+// ---------- food drawing: pixel-art apple (US-03 look) ----------
+// 12 x 14 pixel apple, built in code so no image file is needed at run time.
+namespace ui {
+inline const sf::Texture& appleTexture() {
+    static const char* ART[14] = {
+        ".......a....",
+        "......ab....",
+        "......a.....",
+        "...ccabaa...",
+        ".ccdcbcecaa.",
+        "ccefdddfgcaa",
+        "cceeegegeeca",
+        "ccegegeeeeeh",
+        "acceecceceeh",
+        "accccceccech",
+        ".accecccech.",
+        ".acccceecch.",
+        "..hcccccch..",
+        "...haaahh...",
+    };
+    static sf::Texture tex = [] {
+        auto col = [](char k) -> sf::Color {
+            switch (k) {
+                case 'a': return {127, 44, 3};     // stem / rim brown
+                case 'b': return {92, 42, 7};      // dark stem
+                case 'c': return {165, 14, 23};    // body red
+                case 'd': return {249, 159, 166};  // highlight
+                case 'e': return {226, 23, 36};    // bright red
+                case 'f': return {251, 105, 112};  // pink shine
+                case 'g': return {252, 31, 49};    // light red
+                case 'h': return {94, 5, 11};      // shadow
+                default:  return sf::Color::Transparent;
+            }
+        };
+        sf::Image img({12u, 14u}, sf::Color::Transparent);
+        for (unsigned r = 0; r < 14; ++r)
+            for (unsigned c = 0; c < 12; ++c) img.setPixel({c, r}, col(ART[r][c]));
+        sf::Texture t;
+        (void)t.loadFromImage(img);
+        t.setSmooth(false);                // keep crisp pixel edges
+        return t;
+    }();
+    return tex;
+}
+inline void drawApple(sf::RenderTarget& t, Position p) {
+    sf::Sprite s(appleTexture());
+    s.setScale({1.5f, 1.5f});              // 18 x 21 px inside a 24 px cell
+    s.setPosition({BOARD_X + p.col * CELL + 3.f, BOARD_Y + p.row * CELL + 1.f});
+    t.draw(s);
+}
+}  // namespace ui
+
+// ---------- HUD (US-07 look) ----------
+namespace ui {
+struct Hud {
+    sf::Font font;
+    // Portable font search (NFR-6): a bundled font first, then the usual system fonts on
+    // Windows, Linux and macOS. Each path is checked first so SFML prints no errors for misses.
+    bool load() {
+        std::vector<std::string> paths = {"assets/font.ttf", "font.ttf"};
+        if (const char* win = std::getenv("WINDIR")) {
+            paths.push_back(std::string(win) + "/Fonts/segoeui.ttf");
+            paths.push_back(std::string(win) + "/Fonts/arial.ttf");
+        }
+        for (const char* p : {"C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf",
+                              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                              "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                              "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+                              "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                              "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                              "/System/Library/Fonts/Supplemental/Arial.ttf",
+                              "/Library/Fonts/Arial.ttf"})
+            paths.push_back(p);
+        for (const auto& f : paths) {
+            std::error_code ec;
+            if (std::filesystem::exists(f, ec) && font.openFromFile(f)) return true;
+        }
+        return false;
+    }
+    // Width of a piece of text in pixels (used to line up columns).
+    float width(const std::string& s, unsigned size, bool bold = false) const {
+        sf::Text tx(font, s, size);
+        if (bold) tx.setStyle(sf::Text::Bold);
+        return tx.getLocalBounds().size.x;
+    }
+    // Small pill at the top of the board, e.g. "NEW GAME".
+    void banner(sf::RenderTarget& t, const std::string& s, sf::Color fill, sf::Color ink) {
+        sf::RenderStates id;
+        const float w = width(s, 13, true) + 28;
+        rect(t, id, WIN_W / 2.f - w / 2, BOARD_Y + 12, w, 26, fill);
+        centered(t, s, 13, ink, BOARD_Y + 16, true);
+    }
+    void text(sf::RenderTarget& t, const std::string& s, unsigned size, sf::Color c,
+              float x, float y, bool bold = false) {
+        sf::Text tx(font, s, size);
+        tx.setFillColor(c);
+        if (bold) tx.setStyle(sf::Text::Bold);
+        tx.setPosition({x, y});
+        t.draw(tx);
+    }
+    void centered(sf::RenderTarget& t, const std::string& s, unsigned size, sf::Color c,
+                  float y, bool bold = false) {
+        sf::Text tx(font, s, size);
+        tx.setFillColor(c);
+        if (bold) tx.setStyle(sf::Text::Bold);
+        tx.setPosition({WIN_W / 2.f - tx.getLocalBounds().size.x / 2.f, y});
+        t.draw(tx);
+    }
+    void card(sf::RenderTarget& t, float x, const std::string& label, int value, sf::Color c) {
+        sf::RenderStates id;
+        rect(t, id, x, 24, 115, 62, CARD_BORDER);
+        rect(t, id, x + 1, 25, 113, 60, CARD);
+        text(t, label, 11, MUTED, x + 14, 32);
+        text(t, std::to_string(value), 28, c, x + 14, 46, true);
+    }
+    // Title + subtitle on the left, SCORE and BEST cards on the right.
+    void draw(sf::RenderTarget& t, int score, int best, const std::string& subtitle) {
+        text(t, "SNAKE", 34, GREEN, BOARD_X, 28, true);
+        text(t, subtitle, 12, MUTED, BOARD_X + 2, 70);
+        card(t, 320, "SCORE", score, sf::Color::White);
+        card(t, 445, "BEST", best, GOLD);
+    }
+    // Muted key-hint line under the board.
+    void hint(sf::RenderTarget& t, const std::string& s) { centered(t, s, 12, MUTED, 596); }
+    // Dimmed panel over the board with a title and a line of detail.
+    void overlay(sf::RenderTarget& t, const std::string& title, const std::string& sub) {
+        sf::RenderStates id;
+        rect(t, id, BOARD_X, BOARD_Y, COLS * CELL, ROWS * CELL, sf::Color(0, 0, 0, 175));
+        centered(t, title, 38, sf::Color::White, 220, true);
+        centered(t, sub, 15, MUTED, 275);
+    }
+};
+}  // namespace ui
+
+// Creates the standard 640x620 game window.
+inline sf::RenderWindow makeWindow(const std::string& title) {
+    sf::RenderWindow w(sf::VideoMode({(unsigned)ui::WIN_W, (unsigned)ui::WIN_H}), title,
+                       sf::Style::Titlebar | sf::Style::Close);
+    w.setFramerateLimit(60);
+    return w;
+}
+
+// ===================== US-01: Initialize Game Grid (FR-1, SEC-4) =====================
+// Rectangular grid, configurable size, default 20 columns x 20 rows.
+class GameGrid {
+public:
+    static constexpr int DEFAULT_COLS = 20, DEFAULT_ROWS = 20, MIN_SIZE = 5;
+
+    explicit GameGrid(int cols = DEFAULT_COLS, int rows = DEFAULT_ROWS) {
+        if (cols < MIN_SIZE || rows < MIN_SIZE) { cols = DEFAULT_COLS; rows = DEFAULT_ROWS; }
+        cols_ = cols; rows_ = rows;
+        cells_.assign(static_cast<size_t>(cols_) * rows_, 0);
+    }
+    int cols() const { return cols_; }
+    int rows() const { return rows_; }
+
+    // SEC-4: every access goes through this check
+    bool inBounds(Position p) const {
+        return p.col >= 0 && p.col < cols_ && p.row >= 0 && p.row < rows_;
+    }
+    bool isOccupied(Position p) const { return inBounds(p) && cells_[idx(p)] != 0; }
+    bool setOccupied(Position p, bool v) {
+        if (!inBounds(p)) return false;
+        cells_[idx(p)] = v ? 1 : 0;
+        return true;
+    }
+    void clear() { cells_.assign(cells_.size(), 0); }
+
+private:
+    int cols_, rows_;
+    std::vector<std::uint8_t> cells_;
+    int idx(Position p) const { return p.row * cols_ + p.col; }
+};
+
+// ===================== US-02: Initialize Snake (FR-2) =====================
+// Centre of grid, length 3, heading RIGHT. Body stored head-first.
+class Snake {
+public:
+    static constexpr size_t INITIAL_LENGTH = 3;
+
+    void init(int gridCols, int gridRows) {
+        body_.clear();
+        heading_ = pending_ = Direction::RIGHT;
+        const int c = gridCols / 2, r = gridRows / 2;
+        for (size_t i = 0; i < INITIAL_LENGTH; ++i)
+            body_.push_back({c - static_cast<int>(i), r});
+    }
+    const std::deque<Position>& body() const { return body_; }
+    Position head() const { return body_.front(); }
+    Position tail() const { return body_.back(); }
+    Direction heading() const { return heading_; }   // direction of the last move
+    Direction pending() const { return pending_; }   // direction for the next move
+    size_t length() const { return body_.size(); }
+
+    // Low-level edits used by the movement / control stories.
+    void setPending(Direction d) { pending_ = d; }
+    void commitHeading() { heading_ = pending_; }
+    void pushHead(Position p) { body_.push_front(p); }
+    void popTail() { if (!body_.empty()) body_.pop_back(); }
+
+private:
+    std::deque<Position> body_;
+    Direction heading_ = Direction::RIGHT, pending_ = Direction::RIGHT;
+};
+
+// Marks the snake's cells as occupied on the grid (used by food spawning & collisions).
+inline void syncGrid(GameGrid& g, const Snake& s) {
+    g.clear();
+    for (const auto& p : s.body()) g.setOccupied(p, true);
+}
+
+// ===================== US-03: Spawn Food (FR-3) =====================
+// Exactly one food item at a random UNOCCUPIED cell, at game start and after each meal.
+class FoodSpawner {
+public:
+    explicit FoodSpawner(unsigned seed = std::random_device{}()) : rng_(seed) {}
+
+    // Returns the new food cell, or nullopt if the board is completely full.
+    std::optional<Position> spawn(const GameGrid& g) {
+        std::vector<Position> freeCells;
+        freeCells.reserve(static_cast<size_t>(g.cols()) * g.rows());
+        for (int r = 0; r < g.rows(); ++r)
+            for (int c = 0; c < g.cols(); ++c)
+                if (!g.isOccupied({c, r})) freeCells.push_back({c, r});
+        if (freeCells.empty()) return std::nullopt;
+        std::uniform_int_distribution<size_t> pick(0, freeCells.size() - 1);
+        return freeCells[pick(rng_)];
+    }
+
+private:
+    std::mt19937 rng_;
+};
+
+// ===================== US-04: Directional Keyboard Control (FR-4, NFR-3, SO-2) =====================
+// Arrow keys or W/A/S/D change the heading. A direct reversal (e.g. RIGHT -> LEFT) is ignored.
+inline Direction opposite(Direction d) {
+    switch (d) { case Direction::UP: return Direction::DOWN; case Direction::DOWN: return Direction::UP;
+                 case Direction::LEFT: return Direction::RIGHT; default: return Direction::LEFT; }
+}
+inline bool isReversal(Direction current, Direction requested) { return requested == opposite(current); }
+
+// Maps a key to a direction; any other key returns nullopt and is simply ignored.
+inline std::optional<Direction> directionForKey(sf::Keyboard::Key k) {
+    using K = sf::Keyboard::Key;
+    switch (k) {
+        case K::Up:    case K::W: return Direction::UP;
+        case K::Down:  case K::S: return Direction::DOWN;
+        case K::Left:  case K::A: return Direction::LEFT;
+        case K::Right: case K::D: return Direction::RIGHT;
+        default: return std::nullopt;
+    }
+}
+
+// Checked against the heading of the LAST MOVE (not the pending one), so two quick key
+// presses inside one tick (moving RIGHT, press UP then LEFT) can never fold the snake onto itself.
+inline bool requestDirection(Snake& s, Direction d) {
+    if (isReversal(s.heading(), d)) return false;
+    s.setPending(d);
+    return true;
+}
+inline const char* dirName(Direction d) {
+    switch (d) { case Direction::UP: return "UP"; case Direction::DOWN: return "DOWN";
+                 case Direction::LEFT: return "LEFT"; default: return "RIGHT"; }
+}
+
+// ===================== US-05: Snake Movement and Game Tick (FR-5, NFR-2) =====================
+// Every tick the snake moves exactly one cell. Default tick 150 ms, allowed 80..300 ms.
+inline Position stepFrom(Position p, Direction d) {
+    switch (d) { case Direction::UP: --p.row; break; case Direction::DOWN: ++p.row; break;
+                 case Direction::LEFT: --p.col; break; default: ++p.col; }
+    return p;
+}
+inline Position nextHead(const Snake& s) { return stepFrom(s.head(), s.pending()); }
+
+// Moves one cell. If grow == false the tail is removed, so the length stays the same.
+inline void advance(Snake& s, bool grow) {
+    s.pushHead(nextHead(s));
+    s.commitHeading();
+    if (!grow) s.popTail();
+}
+
+class TickTimer {
+public:
+    static constexpr int DEFAULT_MS = 150, MIN_MS = 80, MAX_MS = 300;
+    explicit TickTimer(int ms = DEFAULT_MS) { setInterval(ms); }
+
+    void setInterval(int ms) { interval_ = ms < MIN_MS ? MIN_MS : (ms > MAX_MS ? MAX_MS : ms); }
+    int intervalMs() const { return interval_; }
+    void reset() { acc_ = 0; }
+
+    // Feed the frame time; returns true when a tick is due (at most one tick per call).
+    bool update(int elapsedMs) {
+        acc_ += elapsedMs;
+        if (acc_ > 3 * interval_) acc_ = interval_;        // after a stall, don't burst-move
+        if (acc_ < interval_) return false;
+        acc_ -= interval_;
+        return true;
+    }
+
+private:
+    int interval_ = DEFAULT_MS, acc_ = 0;
+};
+
+// ===================== US-06: Food Consumption and Growth (FR-6) =====================
+// Head reaches the food -> snake grows by 1 segment and score +10, in the same tick.
+constexpr int POINTS_PER_FOOD = 10;
+
+class Score {
+public:
+    void reset() { value_ = 0; }
+    void add(int pts) { value_ += pts; }
+    int value() const { return value_; }
+private:
+    int value_ = 0;
+};
+
+// Performs one move. Returns true if the food was eaten during this move.
+inline bool moveAndEat(Snake& s, Position food, Score& score) {
+    const bool eat = (nextHead(s) == food);
+    advance(s, eat);                       // grow = keep the tail this tick
+    if (eat) score.add(POINTS_PER_FOOD);
+    return eat;
+}
+
+// ===================== US-07: Display Live Score (FR-7, FR-15) =====================
+// The HUD shows SCORE and BEST. The shown value is refreshed in the same tick it changes.
+class ScoreDisplay {
+public:
+    // Call once per tick after the game logic; returns true if the shown value changed.
+    bool update(int score) {
+        const bool changed = (score != shown_);
+        shown_ = score;
+        return changed;
+    }
+    int shown() const { return shown_; }
+    void draw(sf::RenderTarget& t, ui::Hud& hud, int best, const std::string& subtitle) const {
+        hud.draw(t, shown_, best, subtitle);
+    }
+private:
+    int shown_ = 0;
+};
+
+// ===================== US-08: Collision Detection (FR-8, SEC-4) =====================
+// A collision happens when the NEXT head cell is (a) outside the grid or (b) on the snake's body.
+enum class Collision { NONE, WALL, SELF };
+
+// growing = the snake eats on this move, so its tail does NOT move out of the way.
+inline Collision checkCollision(const GameGrid& g, const Snake& s, Position nh, bool growing) {
+    if (!g.inBounds(nh)) return Collision::WALL;
+    const auto& b = s.body();
+    const size_t n = growing ? b.size() : b.size() - 1;   // the tail cell is vacated this tick
+    for (size_t i = 0; i < n; ++i)
+        if (b[i] == nh) return Collision::SELF;
+    return Collision::NONE;
+}
+inline const char* collisionName(Collision c) {
+    switch (c) { case Collision::WALL: return "wall"; case Collision::SELF: return "own body";
+                 default: return "none"; }
+}
+
+// ===================== US-09: Game Over (FR-9) =====================
+// On collision: stop movement within the same tick and show "Game Over" with the final score.
+enum class GameState { RUNNING, GAME_OVER };
+
+class GameSession {
+public:
+    void start() { state_ = GameState::RUNNING; finalScore_ = 0; cause_ = Collision::NONE; }
+    void end(int finalScore, Collision cause) {
+        if (state_ == GameState::GAME_OVER) return;     // end only once
+        state_ = GameState::GAME_OVER;
+        finalScore_ = finalScore;
+        cause_ = cause;
+    }
+    bool isOver() const { return state_ == GameState::GAME_OVER; }
+    bool canMove() const { return state_ == GameState::RUNNING; }
+    int finalScore() const { return finalScore_; }
+    Collision cause() const { return cause_; }
+private:
+    GameState state_ = GameState::RUNNING;
+    int finalScore_ = 0;
+    Collision cause_ = Collision::NONE;
+};
+
+// One full game tick: collision check first, then move/eat. Returns true if the game ended.
+inline bool gameTick(GameGrid& g, Snake& s, Position& food, FoodSpawner& spawner,
+                     Score& score, GameSession& session) {
+    if (!session.canMove()) return false;
+    const Position nh = nextHead(s);
+    const bool eating = (nh == food);
+    const Collision c = checkCollision(g, s, nh, eating);
+    if (c != Collision::NONE) { session.end(score.value(), c); return true; }
+    moveAndEat(s, food, score);
+    syncGrid(g, s);
+    if (eating) {
+        auto f = spawner.spawn(g);
+        if (!f) { session.end(score.value(), Collision::NONE); return true; }   // board full: win
+        food = *f;
+    }
+    return false;
+}
+
+// Draws the standard frame: HUD, hint line, board, apple and snake (used by every demo window).
+inline void drawScene(sf::RenderTarget& t, ui::Hud& hud, const Snake& s, Position food, int score,
+                      int best, const std::string& subtitle, const std::string& hint) {
+    hud.draw(t, score, best, subtitle);
+    hud.hint(t, hint);
+    ui::drawBoard(t);
+    ui::drawApple(t, food);
+    ui::drawSnake(t, s.body(), s.heading());
+}
+
+// Sprint-1 regression check (US-01 .. US-09) - run first by every sprint-2 self-test.
+static void testSprint1() {
+    GameGrid g;                       assert(g.cols() == 20 && g.rows() == 20);
+    Snake s; s.init(20, 20);          assert(s.length() == 3 && s.head() == (Position{10, 10}));
+    syncGrid(g, s);
+    FoodSpawner sp(1);
+    for (int i = 0; i < 200; ++i) { auto f = sp.spawn(g); assert(f && !g.isOccupied(*f)); }
+    assert(!requestDirection(s, Direction::LEFT));
+    TickTimer t;                      assert(t.intervalMs() == 150);
+    Score sc;
+    assert(moveAndEat(s, nextHead(s), sc) && s.length() == 4 && sc.value() == 10);
+    assert(checkCollision(g, s, {20, 10}, false) == Collision::WALL);
+    GameSession session;              session.start();
+    Position food{0, 0};
+    while (!gameTick(g, s, food, sp, sc, session)) {}
+    assert(session.isOver() && !session.canMove());
+    std::cout << "Sprint 1 regression OK (US-01 .. US-09)\n";
+}
+
+// ---------- sprint-2 shared state: everything US-01 .. US-09 creates, kept in one place ----------
+struct World {
+    GameGrid    grid{ui::COLS, ui::ROWS};
+    Snake       snake;
+    FoodSpawner spawner;
+    Position    food{};
+    Score       score;
+    GameSession session;
+    explicit World(unsigned seed = std::random_device{}()) : spawner(seed) {}
+};
+
+// FR-1 .. FR-3: empty grid, snake in the centre (length 3, heading RIGHT), one apple, score 0.
+inline void startWorld(World& w) {
+    w.snake.init(w.grid.cols(), w.grid.rows());
+    syncGrid(w.grid, w.snake);
+    w.food = *w.spawner.spawn(w.grid);
+    w.score.reset();
+    w.session.start();
+}
+// One game tick on the whole world (US-05 .. US-09). Returns true if the game ended.
+inline bool tickWorld(World& w) {
+    return gameTick(w.grid, w.snake, w.food, w.spawner, w.score, w.session);
+}
+// Screenshot / test helper: the snake eats n apples placed straight ahead of it.
+inline void demoEat(World& w, int n) {
+    for (int i = 0; i < n; ++i) { w.food = nextHead(w.snake); tickWorld(w); }
+}
+
+// ===================== US-10: Pause and Resume Game (FR-10) =====================
+// P or Space toggles between RUNNING and PAUSED.
+//  - While paused no tick runs, so the snake, the apple and the score are frozen.
+//  - Direction keys pressed while paused are ignored (no free turn while the game is stopped).
+//  - On resume the tick timer starts a fresh 150 ms interval, so the snake never jumps.
+//  - Losing window focus (alt-tab) also pauses, so the snake does not die unattended.
+//  - Pausing after Game Over does nothing.
+inline bool isPauseKey(sf::Keyboard::Key k) {
+    return k == sf::Keyboard::Key::P || k == sf::Keyboard::Key::Space;
+}
+
+class PauseControl {
+public:
+    // Returns true if the state changed.
+    bool toggle(const GameSession& s, TickTimer& t) {
+        if (s.isOver()) return false;
+        paused_ = !paused_;
+        t.reset();                                   // resume = fresh interval, no jump
+        return true;
+    }
+    // Pause only (used when the window loses focus). Returns true if it paused now.
+    bool pause(const GameSession& s, TickTimer& t) { return !paused_ && toggle(s, t); }
+    void reset() { paused_ = false; }
+    bool paused() const { return paused_; }
+private:
+    bool paused_ = false;
+};
+
+// One frame of game logic: a tick runs only while RUNNING. Returns true if the game ended.
+inline bool updateWorld(World& w, TickTimer& t, const PauseControl& p, int elapsedMs) {
+    if (p.paused() || !w.session.canMove()) return false;
+    if (!t.update(elapsedMs)) return false;
+    return tickWorld(w);
+}
+// Steering only counts while RUNNING (FR-10: input is ignored while paused).
+inline bool steer(World& w, const PauseControl& p, Direction d) {
+    if (p.paused() || !w.session.canMove()) return false;
+    return requestDirection(w.snake, d);
+}
+
+static void testUS10() {
+    World w(3);
+    startWorld(w);
+    w.food = {0, 0};                                         // keep the apple out of the way
+    TickTimer t;
+    PauseControl p;
+    assert(isPauseKey(sf::Keyboard::Key::P) && isPauseKey(sf::Keyboard::Key::Space));
+    assert(!isPauseKey(sf::Keyboard::Key::Q));
+
+    updateWorld(w, t, p, 150);
+    assert(w.snake.head() == (Position{11, 10}));
+    assert(p.toggle(w.session, t) && p.paused());
+    const Position frozen = w.snake.head();
+    for (int i = 0; i < 100; ++i) assert(!updateWorld(w, t, p, 50));   // 5 s of paused frames
+    assert(w.snake.head() == frozen && w.snake.length() == 3 && w.score.value() == 0);
+    assert(!steer(w, p, Direction::UP) && w.snake.pending() == Direction::RIGHT);
+
+    assert(p.toggle(w.session, t) && !p.paused());           // resume
+    updateWorld(w, t, p, 149);
+    assert(w.snake.head() == frozen);                         // fresh interval: no jump
+    updateWorld(w, t, p, 1);
+    assert(w.snake.head() == (Position{12, 10}));             // then exactly one cell
+
+    assert(p.pause(w.session, t) && p.paused() && !p.pause(w.session, t));   // focus lost
+    p.reset();
+    w.session.end(0, Collision::WALL);
+    assert(!p.toggle(w.session, t) && !p.paused());           // no pause after Game Over
+    std::cout << "US-10 OK: pause freezes the game, input ignored, resume continues one cell per tick\n";
+}
+
+// ===================== US-11: Restart Game (FR-11) =====================
+// R starts a brand-new game: grid cleared, snake back in the centre (length 3, heading RIGHT),
+// a new apple, score 0, state RUNNING, not paused.
+// Allowed after Game Over or while paused, so a stray R in the middle of a run cannot wipe it.
+// The high score (BEST) is not part of the world and is never touched by a restart.
+inline bool isRestartKey(sf::Keyboard::Key k) { return k == sf::Keyboard::Key::R; }
+inline bool canRestart(const GameSession& s, const PauseControl& p) { return s.isOver() || p.paused(); }
+
+// Returns true if the game was restarted.
+inline bool restartGame(World& w, TickTimer& t, PauseControl& p) {
+    if (!canRestart(w.session, p)) return false;
+    startWorld(w);
+    t.reset();
+    p.reset();
+    return true;
+}
+
+// True when the world is exactly in the FR-1 .. FR-3 start state.
+inline bool isFreshStart(const World& w) {
+    const auto& b = w.snake.body();
+    const int c = w.grid.cols() / 2, r = w.grid.rows() / 2;
+    return b.size() == Snake::INITIAL_LENGTH && b[0] == (Position{c, r}) &&
+           b[1] == (Position{c - 1, r}) && b[2] == (Position{c - 2, r}) &&
+           w.snake.heading() == Direction::RIGHT && w.snake.pending() == Direction::RIGHT &&
+           w.score.value() == 0 && w.session.canMove() &&
+           w.grid.inBounds(w.food) && !w.grid.isOccupied(w.food);
+}
+
+static void testUS11() {
+    World w(11);
+    startWorld(w);
+    TickTimer t;
+    PauseControl p;
+    assert(isRestartKey(sf::Keyboard::Key::R) && !isRestartKey(sf::Keyboard::Key::T));
+
+    demoEat(w, 2);
+    assert(w.score.value() == 20 && w.snake.length() == 5);
+    assert(!restartGame(w, t, p) && w.score.value() == 20);   // running: R is ignored
+
+    p.toggle(w.session, t);                                    // paused: restart allowed
+    assert(restartGame(w, t, p) && isFreshStart(w) && !p.paused());
+
+    while (!tickWorld(w)) {}                                   // straight into the wall
+    assert(w.session.isOver());
+    assert(restartGame(w, t, p) && isFreshStart(w));           // after Game Over
+
+    for (int i = 0; i < 500; ++i) {                            // many restarts: always a clean start
+        w.session.end(0, Collision::SELF);
+        assert(restartGame(w, t, p) && isFreshStart(w));
+    }
+    std::cout << "US-11 OK: restart (paused / game over) resets snake, food, score and state\n";
+}
+
+// ===================== US-12: Exit Game (FR-12) =====================
+// Esc or the window's close button quits from any state (running, paused, game over).
+// An exit hook runs exactly once before the window closes - the full game uses it to save
+// the high score, so quitting never loses a new best. A second request (Esc, then the close
+// button) is ignored.
+enum class ExitReason { NONE, ESCAPE_KEY, WINDOW_CLOSED };
+
+inline bool isExitKey(sf::Keyboard::Key k) { return k == sf::Keyboard::Key::Escape; }
+inline const char* exitReasonName(ExitReason r) {
+    switch (r) { case ExitReason::ESCAPE_KEY: return "Esc key"; case ExitReason::WINDOW_CLOSED: return "window closed";
+                 default: return "none"; }
+}
+
+class ExitControl {
+public:
+    void setOnExit(std::function<void()> f) { onExit_ = std::move(f); }
+    // First request wins. Returns true if this call started the exit.
+    bool request(ExitReason r) {
+        if (r == ExitReason::NONE || reason_ != ExitReason::NONE) return false;
+        reason_ = r;
+        if (onExit_) onExit_();
+        return true;
+    }
+    bool requested() const { return reason_ != ExitReason::NONE; }
+    ExitReason reason() const { return reason_; }
+private:
+    ExitReason reason_ = ExitReason::NONE;
+    std::function<void()> onExit_;
+};
+
+static void testUS12() {
+    assert(isExitKey(sf::Keyboard::Key::Escape) && !isExitKey(sf::Keyboard::Key::Q));
+    for (int state = 0; state < 3; ++state) {                  // 0 running, 1 paused, 2 game over
+        World w(12);
+        startWorld(w);
+        TickTimer t;
+        PauseControl p;
+        demoEat(w, 1);
+        if (state == 1) p.toggle(w.session, t);
+        if (state == 2) w.session.end(30, Collision::WALL);
+        int calls = 0, savedScore = -1;
+        ExitControl e;
+        e.setOnExit([&] { ++calls; savedScore = w.session.isOver() ? w.session.finalScore() : w.score.value(); });
+        assert(!e.requested());
+        assert(e.request(state == 0 ? ExitReason::ESCAPE_KEY : ExitReason::WINDOW_CLOSED));
+        assert(!e.request(ExitReason::ESCAPE_KEY));            // second request ignored
+        assert(e.requested() && calls == 1);                   // hook ran exactly once
+        assert(savedScore == (state == 2 ? 30 : 10));
+    }
+    ExitControl none;
+    assert(!none.request(ExitReason::NONE) && !none.requested());
+    std::cout << "US-12 OK: Esc / close button exit from running, paused and game over; hook runs once\n";
+}
+
+// ===================== US-13: Load High Score (FR-13, SEC-2, SEC-3, SO-3) =====================
+// At start-up the stored high score is read from highscore.dat.
+//  - Missing file  -> 0, no warning (normal on the first run).
+//  - Valid file    -> the number: digits only, 0 .. 999 999, trailing spaces / newline (\n or \r\n) allowed.
+//  - Anything else (letters, sign, decimal point, empty, > 6 digits, huge or binary file)
+//                  -> warning on stderr and 0, the game still starts (SO-3 tamper resilience).
+// The read is bounded to 16 characters (SEC-3), so a huge file cannot slow the start-up.
+constexpr int    MAX_HIGH_SCORE = 999999;
+constexpr size_t MAX_READ = 16;
+
+enum class LoadStatus { OK, MISSING, INVALID, OUT_OF_RANGE, READ_ERROR };
+struct HighScoreLoad {
+    int value = 0;
+    LoadStatus status = LoadStatus::MISSING;
+};
+inline const char* loadStatusName(LoadStatus s) {
+    switch (s) { case LoadStatus::OK: return "ok"; case LoadStatus::MISSING: return "missing";
+                 case LoadStatus::INVALID: return "invalid"; case LoadStatus::OUT_OF_RANGE: return "out of range";
+                 default: return "read error"; }
+}
+
+// Warnings can be silenced while the self-tests feed in hundreds of broken files.
+inline bool& highScoreWarnings() { static bool on = true; return on; }
+inline void hsWarn(const std::string& msg) {
+    if (highScoreWarnings()) std::cerr << "[warn] highscore: " << msg << '\n';
+}
+
+HighScoreLoad readHighScore(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) return {0, LoadStatus::MISSING};       // first run: normal, no warning
+
+    std::string content;                                       // read at most MAX_READ+1 chars
+    char ch;
+    while (content.size() <= MAX_READ && in.get(ch)) content.push_back(ch);
+    if (in.bad()) { hsWarn("read error, using 0"); return {0, LoadStatus::READ_ERROR}; }
+    if (content.size() > MAX_READ) { hsWarn("file too long, resetting to 0"); return {0, LoadStatus::INVALID}; }
+
+    while (!content.empty() && std::isspace(static_cast<unsigned char>(content.back())))
+        content.pop_back();
+
+    bool allDigits = !content.empty();
+    for (char c : content)
+        if (!std::isdigit(static_cast<unsigned char>(c))) { allDigits = false; break; }
+    if (!allDigits) { hsWarn("invalid content, resetting to 0"); return {0, LoadStatus::INVALID}; }
+    if (content.size() > 6) { hsWarn("out of range, resetting to 0"); return {0, LoadStatus::OUT_OF_RANGE}; }
+
+    const int v = std::stoi(content);                          // safe: 1 .. 6 digits
+    if (v > MAX_HIGH_SCORE) { hsWarn("out of range, resetting to 0"); return {0, LoadStatus::OUT_OF_RANGE}; }
+    return {v, LoadStatus::OK};
+}
+int loadHighScore(const std::string& path) { return readHighScore(path).value; }
+
+static void testUS13() {
+    highScoreWarnings() = false;
+    namespace fs = std::filesystem;
+    const std::string f = (fs::temp_directory_path() / "snake_us13_test.dat").string();
+    auto put = [&](const std::string& s) { std::ofstream o(f, std::ios::binary | std::ios::trunc); o << s; };
+    auto is = [&](int v, LoadStatus st) { const auto r = readHighScore(f); return r.value == v && r.status == st; };
+    std::error_code ec;
+    fs::remove(f, ec);
+
+    assert(is(0, LoadStatus::MISSING));                       // first run
+    put("120\n");           assert(is(120, LoadStatus::OK));
+    put("0");               assert(is(0, LoadStatus::OK));    // lower boundary
+    put("999999");          assert(is(999999, LoadStatus::OK));   // upper boundary
+    put("77\r\n");          assert(is(77, LoadStatus::OK));   // Windows line ending
+    put("00042  \n");       assert(is(42, LoadStatus::OK));
+    put("1000000");         assert(is(0, LoadStatus::OUT_OF_RANGE));
+    put("");                assert(is(0, LoadStatus::INVALID));
+    put("abc");             assert(is(0, LoadStatus::INVALID));
+    put("-5");              assert(is(0, LoadStatus::INVALID));
+    put("4.5");             assert(is(0, LoadStatus::INVALID));
+    put("12 34");           assert(is(0, LoadStatus::INVALID));
+    put(" 42");             assert(is(0, LoadStatus::INVALID));
+    put(std::string(100000, '9'));        assert(is(0, LoadStatus::INVALID));   // bounded read
+    put(std::string("\x00\xff\x10\x7f", 4)); assert(is(0, LoadStatus::INVALID));   // binary junk
+    assert(loadHighScore(f) == 0);
+    fs::remove(f, ec);
+    highScoreWarnings() = true;
+    std::cout << "US-13 OK: missing / valid / boundary / corrupt high-score files load safely\n";
+}
+
+// ===================== US-14: Update and Persist High Score (FR-14, SEC-1, SO-1, NFR-4) =====================
+// When a session ends (game over, restart from pause, or exit) the final score is compared
+// with the stored best and written only if it is strictly greater - the best never goes down.
+// Writing is crash-safe: the number goes to highscore.dat.tmp first and is then renamed over
+// the real file, so a crash or power cut mid-write leaves the old file intact (SO-1).
+// If the platform cannot rename onto an existing file, the old file is moved aside first and
+// put back if anything fails, so the old score is never lost.
+bool saveHighScore(const std::string& path, int score) {
+    namespace fs = std::filesystem;
+    if (score < 0 || score > MAX_HIGH_SCORE) { hsWarn("refusing out-of-range value"); return false; }
+    const std::string tmp = path + ".tmp";
+    std::error_code ec;
+    {
+        std::ofstream out(tmp, std::ios::trunc | std::ios::binary);
+        if (!out.is_open()) { hsWarn("cannot create temp file, old file kept"); return false; }
+        out << score << '\n';
+        out.flush();
+        if (!out.good()) {
+            out.close();
+            fs::remove(tmp, ec);
+            hsWarn("write failed, old file kept");
+            return false;
+        }
+    }
+    fs::rename(tmp, path, ec);
+    if (ec) {                                                   // fallback: move old file aside
+        const std::string bak = path + ".bak";
+        std::error_code e2;
+        fs::remove(bak, e2);
+        fs::rename(path, bak, e2);
+        const bool movedOld = !e2;
+        fs::rename(tmp, path, ec);
+        if (ec) {
+            if (movedOld) fs::rename(bak, path, e2);            // put the old score back
+            fs::remove(tmp, e2);
+            hsWarn("rename failed, old file kept");
+            return false;
+        }
+        if (movedOld) fs::remove(bak, e2);
+    }
+    return true;
+}
+
+// FR-14: called once at the end of a session. Returns the (possibly new) best.
+int finalizeSession(const std::string& path, int storedHigh, int finalScore) {
+    if (finalScore > storedHigh && saveHighScore(path, finalScore)) return finalScore;
+    return storedHigh;
+}
+
+static void testUS14() {
+    highScoreWarnings() = false;
+    namespace fs = std::filesystem;
+    const std::string f = (fs::temp_directory_path() / "snake_us14_test.dat").string();
+    std::error_code ec;
+    fs::remove(f, ec);
+
+    assert(finalizeSession(f, 0, 50) == 50 && loadHighScore(f) == 50);       // first save
+    assert(finalizeSession(f, 50, 30) == 50 && loadHighScore(f) == 50);      // lower: kept
+    const auto stamp = fs::last_write_time(f);
+    assert(finalizeSession(f, 50, 50) == 50 && fs::last_write_time(f) == stamp);   // equal: not rewritten
+    assert(finalizeSession(f, 50, 999999) == 999999 && loadHighScore(f) == 999999); // upper boundary
+    assert(!saveHighScore(f, 1000000) && !saveHighScore(f, -1));             // out of range refused
+    assert(loadHighScore(f) == 999999);
+
+    std::ifstream in(f, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    assert(text == "999999\n");                                              // plain, portable text
+    assert(!fs::exists(f + ".tmp") && !fs::exists(f + ".bak"));               // no leftovers
+
+    const std::string bad = (fs::temp_directory_path() / "snake_no_such_dir_14" / "hs.dat").string();
+    assert(finalizeSession(bad, 80, 200) == 80);                              // write fails: best kept
+
+    fs::remove(f, ec);                                                        // NFR-4: many sessions
+    std::mt19937 rng(14);
+    int best = 0;
+    for (int i = 0; i < 200; ++i) {
+        const int s = static_cast<int>(rng() % 5000);
+        const int nb = finalizeSession(f, best, s);
+        assert(nb == std::max(best, s) && loadHighScore(f) == (nb > 0 ? nb : 0));
+        best = nb;
+    }
+    fs::remove(f, ec);
+    highScoreWarnings() = true;
+    std::cout << "US-14 OK: best only goes up, atomic temp+rename write, failures keep the old value\n";
+}
+
+// ===================== US-15: Display High Score (FR-15) =====================
+// The BEST card is always shown next to the live SCORE card.
+//  - BEST shows max(stored best, live score), refreshed in the same tick the score changes.
+//  - As soon as the live score beats the stored best, a gold "NEW!" badge appears on the card
+//    (a tie is not a new best - same rule as FR-14).
+//  - After the session is saved, a restart shows the new stored best and the badge disappears.
+class HighScoreDisplay {
+public:
+    void setStored(int v) { stored_ = v; }
+    void update(int liveScore) { live_ = liveScore; }          // call every tick, after the logic
+    int shown() const { return std::max(stored_, live_); }
+    bool newBest() const { return live_ > stored_; }
+    int stored() const { return stored_; }
+private:
+    int stored_ = 0, live_ = 0;
+};
+
+namespace ui {
+// Gold "NEW!" badge in the top-right corner of the BEST card.
+inline void drawNewBestBadge(sf::RenderTarget& t, Hud& hud) {
+    sf::RenderStates id;
+    rect(t, id, 445 + 64, 31, 42, 16, GOLD);
+    hud.text(t, "NEW!", 10, BG, 445 + 71, 32, true);
+}
+}  // namespace ui
+
+static void testUS15() {
+    HighScoreDisplay d;
+    d.setStored(120);
+    d.update(0);   assert(d.shown() == 120 && !d.newBest());
+    d.update(120); assert(d.shown() == 120 && !d.newBest());     // tie is not a new best
+    d.update(130); assert(d.shown() == 130 && d.newBest());
+
+    World w(15);                                                 // same-tick refresh during play
+    startWorld(w);
+    d.setStored(10);
+    demoEat(w, 1); d.update(w.score.value()); assert(d.shown() == 10 && !d.newBest());
+    demoEat(w, 1); d.update(w.score.value()); assert(d.shown() == 20 && d.newBest());
+
+    highScoreWarnings() = false;                                 // after saving, restart clears the badge
+    namespace fs = std::filesystem;
+    const std::string f = (fs::temp_directory_path() / "snake_us15_test.dat").string();
+    std::error_code ec;
+    fs::remove(f, ec);
+    w.session.end(w.score.value(), Collision::WALL);
+    d.setStored(finalizeSession(f, 10, w.session.finalScore()));
+    TickTimer t;
+    PauseControl p;
+    assert(restartGame(w, t, p));
+    d.update(w.score.value());
+    assert(d.shown() == 20 && !d.newBest() && loadHighScore(f) == 20);
+    fs::remove(f, ec);
+    highScoreWarnings() = true;
+    std::cout << "US-15 OK: BEST = max(stored, live) every tick, NEW! badge only when beaten\n";
+}
+
+// ===================== US-16: Meet Performance Requirements (NFR-1, NFR-2) =====================
+// NFR-1: drawing one frame must take <= 33 ms.   NFR-2: one full game tick must take <= 50 ms.
+//  - Stopwatch measures with std::chrono::steady_clock (portable, monotonic).
+//  - PerfMonitor keeps the last N samples (bounded memory) plus the worst value ever seen.
+//  - The self-test plays a WHOLE game with an autopilot that fills all 400 cells of the
+//    board - the worst case for every tick (400-segment snake, food search over a full grid)
+//    - and checks every single tick against the 50 ms budget.
+//  - The demo window (and the full game, F3) shows live draw / tick times against the budgets.
+constexpr double FRAME_BUDGET_MS = 33.0, TICK_BUDGET_MS = 50.0;
+
+class Stopwatch {
+public:
+    Stopwatch() : t0_(std::chrono::steady_clock::now()) {}
+    void restart() { t0_ = std::chrono::steady_clock::now(); }
+    double ms() const {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0_).count();
+    }
+private:
+    std::chrono::steady_clock::time_point t0_;
+};
+
+class PerfMonitor {
+public:
+    explicit PerfMonitor(size_t window = 240) : cap_(window ? window : 1) {}
+    void add(double ms) {
+        if (s_.size() == cap_) s_.pop_front();
+        s_.push_back(ms);
+        ++total_;
+        worstEver_ = std::max(worstEver_, ms);
+    }
+    double avg() const {
+        double sum = 0;
+        for (double v : s_) sum += v;
+        return s_.empty() ? 0.0 : sum / s_.size();
+    }
+    double max() const { return s_.empty() ? 0.0 : *std::max_element(s_.begin(), s_.end()); }
+    double worstEver() const { return worstEver_; }
+    size_t count() const { return s_.size(); }
+    size_t total() const { return total_; }
+    bool within(double budgetMs) const { return worstEver_ <= budgetMs; }
+private:
+    std::deque<double> s_;
+    size_t cap_, total_ = 0;
+    double worstEver_ = 0;
+};
+
+inline std::string fmtMs(double v) {
+    std::ostringstream o;
+    o << std::fixed << std::setprecision(v < 10 ? 2 : 1) << v;
+    return o.str();
+}
+
+// Autopilot that follows a Hamiltonian cycle (every cell once per lap): it can never crash,
+// so it eventually fills the whole board. Needs an even number of rows.
+//   column 0 is the way back up; rows go right on even rows, left on odd rows over columns 1..cols-1.
+inline Direction autopilot(Position p, int cols, int rows) {
+    if (p.col == 0) return p.row == 0 ? Direction::RIGHT : Direction::UP;
+    if (p.row % 2 == 0) return p.col == cols - 1 ? Direction::DOWN : Direction::RIGHT;
+    if (p.col == 1) return p.row == rows - 1 ? Direction::LEFT : Direction::DOWN;
+    return Direction::LEFT;
+}
+
+namespace ui {
+// Small live performance panel in the top-left corner of the board.
+inline void drawPerfPanel(sf::RenderTarget& t, Hud& hud, const PerfMonitor& frame, const PerfMonitor& tick) {
+    sf::RenderStates id;
+    const float x = BOARD_X + 6, y = BOARD_Y + 6;
+    rect(t, id, x, y, 214, 66, CARD_BORDER);
+    rect(t, id, x + 1, y + 1, 212, 64, sf::Color(10, 10, 14, 235));
+    const bool fOk = frame.max() <= FRAME_BUDGET_MS, tOk = tick.max() <= TICK_BUDGET_MS;
+    hud.text(t, "draw  avg " + fmtMs(frame.avg()) + "  max " + fmtMs(frame.max()) + " ms", 11,
+             fOk ? LIGHT : DANGER, x + 9, y + 6);
+    hud.text(t, "tick   avg " + fmtMs(tick.avg()) + "  max " + fmtMs(tick.max()) + " ms", 11,
+             tOk ? LIGHT : DANGER, x + 9, y + 24);
+    hud.text(t, std::string("budget 33 / 50 ms   ") + (fOk && tOk ? "PASS" : "OVER"), 11, MUTED, x + 9, y + 42);
+}
+}  // namespace ui
+
+static void testUS16() {
+    PerfMonitor m(3);
+    m.add(1); m.add(2); m.add(3);
+    assert(std::abs(m.avg() - 2.0) < 1e-9 && m.max() == 3.0);
+    m.add(10); m.add(1);                                       // window keeps the last 3
+    assert(m.count() == 3 && m.total() == 5 && m.max() == 10.0 && m.worstEver() == 10.0);
+    assert(!m.within(5.0) && m.within(10.0));
+
+    World w(16);
+    startWorld(w);
+    PerfMonitor ticks(1000);
+    Stopwatch whole;
+    int n = 0;
+    for (;;) {
+        assert(requestDirection(w.snake, autopilot(w.snake.head(), w.grid.cols(), w.grid.rows())));
+        Stopwatch sw;
+        const bool ended = tickWorld(w);
+        ticks.add(sw.ms());
+        ++n;
+        if (ended) break;
+        assert(n < 400 * 400);
+    }
+    const int cells = w.grid.cols() * w.grid.rows();
+    assert(w.session.isOver() && w.session.cause() == Collision::NONE);      // board full, no crash
+    assert(static_cast<int>(w.snake.length()) == cells);
+    assert(w.score.value() == (cells - 3) * POINTS_PER_FOOD);
+    assert(ticks.within(TICK_BUDGET_MS));                                     // NFR-2 on every tick
+    std::cout << "US-16 OK: " << n << " ticks to fill the board, worst tick " << fmtMs(ticks.worstEver())
+              << " ms (budget 50), total " << fmtMs(whole.ms()) << " ms\n";
+}
+
+// ===================== US-17: Validate Reliability and Input Handling (NFR-3, SO-2, SEC-3, SEC-4) =====================
+//  - Every key goes through commandForKey(); anything not used by the game becomes NONE and
+//    is ignored - no key can crash or confuse the game (NFR-3, SO-2).
+//  - Direction presses go into a small bounded queue (3 entries, SEC-3). Fast taps such as
+//    UP then LEFT inside one 150 ms tick are both kept and applied on the next two ticks,
+//    each checked against the move before it, so the snake still can never reverse into itself.
+//  - checkInvariants() verifies the whole game state (bounds, no overlap, connected body,
+//    grid in sync, food on a free cell, score == 10 x apples eaten).
+//  - The soak test hammers the game with 200 000 random key presses (every SFML key), pauses,
+//    restarts and frame stalls of up to 2 s, and checks the invariants after every step.
+//    It also loads 300 random/corrupt high-score files.
+enum class Command { NONE, UP, DOWN, LEFT, RIGHT, PAUSE, RESTART, EXIT, PERF };
+
+inline Command commandForKey(sf::Keyboard::Key k) {
+    if (auto d = directionForKey(k)) {
+        switch (*d) { case Direction::UP: return Command::UP; case Direction::DOWN: return Command::DOWN;
+                      case Direction::LEFT: return Command::LEFT; default: return Command::RIGHT; }
+    }
+    if (isPauseKey(k)) return Command::PAUSE;
+    if (isRestartKey(k)) return Command::RESTART;
+    if (isExitKey(k)) return Command::EXIT;
+    if (k == sf::Keyboard::Key::F3) return Command::PERF;
+    return Command::NONE;
+}
+inline std::optional<Direction> commandDirection(Command c) {
+    switch (c) { case Command::UP: return Direction::UP; case Command::DOWN: return Direction::DOWN;
+                 case Command::LEFT: return Direction::LEFT; case Command::RIGHT: return Direction::RIGHT;
+                 default: return std::nullopt; }
+}
+
+class DirectionQueue {
+public:
+    static constexpr size_t CAPACITY = 3;
+    // Returns false if the press is dropped (reversal, repeat of the same direction, or queue full).
+    bool push(const Snake& s, Direction d) {
+        const Direction last = q_.empty() ? s.heading() : q_.back();
+        if (d == last || d == opposite(last) || q_.size() >= CAPACITY) return false;
+        q_.push_back(d);
+        return true;
+    }
+    // Called once per tick, just before the move.
+    void applyNext(Snake& s) {
+        if (q_.empty()) return;
+        requestDirection(s, q_.front());
+        q_.pop_front();
+    }
+    void clear() { q_.clear(); }
+    size_t size() const { return q_.size(); }
+private:
+    std::deque<Direction> q_;
+};
+
+// One frame of game logic with the input queue. Returns true if the game ended.
+inline bool updateWithQueue(World& w, TickTimer& t, const PauseControl& p, DirectionQueue& q, int elapsedMs) {
+    if (p.paused() || !w.session.canMove()) return false;
+    if (!t.update(elapsedMs)) return false;
+    q.applyNext(w.snake);
+    return tickWorld(w);
+}
+
+// Returns "" if the game state is valid, otherwise what is wrong.
+inline std::string checkInvariants(const World& w) {
+    const auto& b = w.snake.body();
+    const int cols = w.grid.cols(), rows = w.grid.rows();
+    if (b.size() < Snake::INITIAL_LENGTH) return "snake shorter than 3";
+    std::vector<std::uint8_t> seen(static_cast<size_t>(cols) * rows, 0);
+    for (size_t i = 0; i < b.size(); ++i) {
+        if (!w.grid.inBounds(b[i])) return "segment outside the grid";
+        auto& cell = seen[static_cast<size_t>(b[i].row) * cols + b[i].col];
+        if (cell) return "snake overlaps itself";
+        cell = 1;
+        if (i > 0 && std::abs(b[i].col - b[i - 1].col) + std::abs(b[i].row - b[i - 1].row) != 1)
+            return "body not connected";
+    }
+    for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < cols; ++c)
+            if (w.grid.isOccupied({c, r}) != (seen[static_cast<size_t>(r) * cols + c] != 0))
+                return "grid out of sync with snake";
+    if (w.score.value() != static_cast<int>(b.size() - Snake::INITIAL_LENGTH) * POINTS_PER_FOOD)
+        return "score does not match length";
+    if (w.session.canMove()) {
+        if (!w.grid.inBounds(w.food)) return "food outside the grid";
+        if (seen[static_cast<size_t>(w.food.row) * cols + w.food.col]) return "food under the snake";
+    }
+    return "";
+}
+
+static void testUS17() {
+    // 1. key mapping: every SFML key (plus Unknown) maps to a command or NONE
+    int known = 0;
+    for (unsigned k = 0; k < sf::Keyboard::KeyCount; ++k)
+        if (commandForKey(static_cast<sf::Keyboard::Key>(k)) != Command::NONE) ++known;
+    assert(known == 13);                       // 4 arrows + WASD + P + Space + R + Esc + F3
+    assert(commandForKey(sf::Keyboard::Key::Unknown) == Command::NONE);
+
+    // 2. fast double tap is kept, reversals and repeats are dropped, queue is bounded
+    World w(17);
+    startWorld(w);
+    w.food = {0, 0};
+    DirectionQueue q;
+    assert(q.push(w.snake, Direction::UP) && q.push(w.snake, Direction::LEFT));
+    assert(!q.push(w.snake, Direction::RIGHT) && !q.push(w.snake, Direction::LEFT));
+    q.applyNext(w.snake); tickWorld(w); assert(w.snake.head() == (Position{10, 9}));
+    q.applyNext(w.snake); tickWorld(w); assert(w.snake.head() == (Position{9, 9}));
+    assert(q.size() == 0 && !q.push(w.snake, Direction::RIGHT));   // reversal of LEFT
+    assert(q.push(w.snake, Direction::UP) && q.push(w.snake, Direction::RIGHT) &&
+           q.push(w.snake, Direction::DOWN) && !q.push(w.snake, Direction::LEFT));
+    assert(q.size() == DirectionQueue::CAPACITY);
+
+    // 3. soak test with random input and stalls, invariants checked after every step
+    std::mt19937 rng(1717);
+    World g(1717);
+    startWorld(g);
+    TickTimer t;
+    PauseControl p;
+    q.clear();
+    int games = 1, ignored = 0;
+    size_t maxLen = 0;
+    const int STEPS = 200000;
+    for (int i = 0; i < STEPS; ++i) {
+        const int code = static_cast<int>(rng() % (sf::Keyboard::KeyCount + 1)) - 1;   // includes Unknown
+        const Command c = commandForKey(static_cast<sf::Keyboard::Key>(code));
+        switch (c) {
+            case Command::NONE: ++ignored; break;
+            case Command::PAUSE: p.toggle(g.session, t); break;
+            case Command::RESTART:                                  // mid-game restarts kept rare
+                if ((g.session.isOver() || rng() % 20 == 0) && restartGame(g, t, p)) { q.clear(); ++games; }
+                break;
+            case Command::EXIT: case Command::PERF: break;
+            default: if (!p.paused() && g.session.canMove()) q.push(g.snake, *commandDirection(c));
+        }
+        if (g.session.canMove() && !p.paused() && q.size() == 0 && rng() % 4 != 0) {
+            // greedy "player": a safe turn toward the apple, so snakes grow long too
+            std::optional<Direction> pick;
+            int bestDist = 1 << 30;
+            for (Direction d : {Direction::UP, Direction::DOWN, Direction::LEFT, Direction::RIGHT}) {
+                if (isReversal(g.snake.heading(), d)) continue;
+                const Position n = stepFrom(g.snake.head(), d);
+                if (checkCollision(g.grid, g.snake, n, n == g.food) != Collision::NONE) continue;
+                const int dist = std::abs(n.col - g.food.col) + std::abs(n.row - g.food.row);
+                if (dist < bestDist) { bestDist = dist; pick = d; }
+            }
+            if (pick && *pick != g.snake.heading()) q.push(g.snake, *pick);
+        }
+        if (g.session.isOver() && rng() % 8 == 0 && restartGame(g, t, p)) { q.clear(); ++games; }
+        if (p.paused() && rng() % 50 == 0) p.toggle(g.session, t);        // keep it mostly running
+        const int dt = (rng() % 20 == 0) ? static_cast<int>(rng() % 2000) : static_cast<int>(rng() % 60);
+        updateWithQueue(g, t, p, q, dt);
+        const std::string err = checkInvariants(g);
+        if (!err.empty()) { std::cerr << "US-17 step " << i << ": " << err << '\n'; assert(false); }
+        maxLen = std::max(maxLen, g.snake.length());
+    }
+
+    // 4. random and corrupt high-score files never crash and always give 0 .. 999 999
+    highScoreWarnings() = false;
+    namespace fs = std::filesystem;
+    const std::string f = (fs::temp_directory_path() / "snake_us17_test.dat").string();
+    for (int i = 0; i < 300; ++i) {
+        std::string junk;
+        const int len = static_cast<int>(rng() % 24);
+        for (int j = 0; j < len; ++j)
+            junk.push_back(rng() % 2 ? static_cast<char>('0' + rng() % 10) : static_cast<char>(rng() % 256));
+        { std::ofstream o(f, std::ios::binary | std::ios::trunc); o << junk; }
+        const int v = loadHighScore(f);
+        assert(v >= 0 && v <= MAX_HIGH_SCORE);
+    }
+    std::error_code ec;
+    fs::remove(f, ec);
+    highScoreWarnings() = true;
+    std::cout << "US-17 OK: " << STEPS << " random inputs (" << ignored << " ignored), " << games
+              << " games, longest snake " << maxLen << ", 0 invariant failures; 300 corrupt files handled\n";
+}
+
+// ===================== US-18: Meet Usability Requirements (NFR-5) =====================
+//  - No separate manual (SRS 2.6): at launch the controls are shown on screen for at least
+//    3 seconds with a 3-2-1 countdown, then the game starts by itself.
+//  - H (or F1) opens the same controls list at any time. It pauses the game while open and
+//    resumes on close - but only if the help screen was what paused it.
+//  - Every screen says what to do next (hint line + overlay text); the Game Over panel says
+//    WHY the game ended; text colours meet WCAG contrast (>= 4.5:1 for normal text).
+class IntroScreen {
+public:
+    static constexpr int MIN_MS = 3000;
+    void reset() { elapsed_ = 0; }
+    void update(int dtMs) { if (elapsed_ < MIN_MS) elapsed_ += std::max(0, dtMs); }
+    bool visible() const { return elapsed_ < MIN_MS; }
+    int secondsLeft() const { return visible() ? (MIN_MS - elapsed_ + 999) / 1000 : 0; }
+private:
+    int elapsed_ = 0;
+};
+
+struct ControlHelp { const char* keys; const char* action; };
+inline const std::vector<ControlHelp>& controlsHelp() {
+    static const std::vector<ControlHelp> v = {
+        {"Arrows / WASD", "Steer the snake"},
+        {"P / Space",     "Pause / resume"},
+        {"R",             "Restart (paused or game over)"},
+        {"H / F1",        "Show / hide this help"},
+        {"F3",            "Performance panel"},
+        {"Esc",           "Quit (high score is saved)"},
+    };
+    return v;
+}
+inline bool isHelpKey(sf::Keyboard::Key k) { return k == sf::Keyboard::Key::H || k == sf::Keyboard::Key::F1; }
+
+class HelpOverlay {
+public:
+    void toggle(PauseControl& p, const GameSession& s, TickTimer& t) {
+        if (!open_) {
+            open_ = true;
+            pausedByHelp_ = !p.paused() && p.toggle(s, t);
+        } else {
+            open_ = false;
+            if (pausedByHelp_ && p.paused()) p.toggle(s, t);
+            pausedByHelp_ = false;
+        }
+    }
+    bool open() const { return open_; }
+private:
+    bool open_ = false, pausedByHelp_ = false;
+};
+
+inline std::string gameOverReason(Collision c) {
+    switch (c) { case Collision::WALL: return "You hit the wall";
+                 case Collision::SELF: return "You ran into yourself";
+                 default:              return "The board is full - you win!"; }
+}
+
+// WCAG 2.x relative luminance and contrast ratio (1 = no contrast, 21 = black on white).
+inline double luminance(sf::Color c) {
+    auto ch = [](std::uint8_t v) {
+        const double s = v / 255.0;
+        return s <= 0.03928 ? s / 12.92 : std::pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+}
+inline double contrastRatio(sf::Color a, sf::Color b) {
+    const double la = luminance(a), lb = luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
+
+namespace ui {
+// Controls list over the board (intro screen and help screen).
+inline void drawControls(sf::RenderTarget& t, Hud& hud, const std::string& title, const std::string& footer) {
+    sf::RenderStates id;
+    rect(t, id, BOARD_X, BOARD_Y, COLS * CELL, ROWS * CELL, sf::Color(0, 0, 0, 215));
+    hud.centered(t, title, 34, sf::Color::White, BOARD_Y + 34, true);
+    hud.centered(t, "Eat apples to grow. Don't hit the walls or yourself.", 13, MUTED, BOARD_Y + 86);
+    float y = BOARD_Y + 130;
+    for (const auto& c : controlsHelp()) {
+        const float kw = hud.width(c.keys, 15, true);
+        hud.text(t, c.keys, 15, LIGHT, WIN_W / 2.f - 44 - kw, y, true);
+        hud.text(t, c.action, 15, sf::Color::White, WIN_W / 2.f - 24, y);
+        y += 36;
+    }
+    hud.centered(t, footer, 15, GOLD, BOARD_Y + ROWS * CELL - 56, true);
+}
+}  // namespace ui
+
+static void testUS18() {
+    IntroScreen in;
+    assert(in.visible() && in.secondsLeft() == 3);
+    in.update(1000); assert(in.visible() && in.secondsLeft() == 2);
+    in.update(1999); assert(in.visible() && in.secondsLeft() == 1);       // still shown at 2.999 s
+    in.update(1);    assert(!in.visible() && in.secondsLeft() == 0);      // gone at exactly 3 s
+    in.update(-50);  assert(!in.visible());
+    in.reset();      assert(in.visible());
+
+    std::string all;                                                      // help covers every control
+    for (const auto& c : controlsHelp()) all += std::string(c.keys) + " ";
+    for (const char* k : {"Arrows", "WASD", "P", "Space", "R", "H", "F1", "F3", "Esc"})
+        assert(all.find(k) != std::string::npos);
+    assert(isHelpKey(sf::Keyboard::Key::H) && isHelpKey(sf::Keyboard::Key::F1) && !isHelpKey(sf::Keyboard::Key::J));
+
+    World w(18);
+    startWorld(w);
+    TickTimer t;
+    PauseControl p;
+    HelpOverlay h;
+    h.toggle(p, w.session, t); assert(h.open() && p.paused());           // help pauses a running game
+    h.toggle(p, w.session, t); assert(!h.open() && !p.paused());         // ...and resumes it
+    p.toggle(w.session, t);                                              // user paused first
+    h.toggle(p, w.session, t); h.toggle(p, w.session, t);
+    assert(!h.open() && p.paused());                                     // stays paused
+    p.reset();
+    w.session.end(0, Collision::WALL);
+    h.toggle(p, w.session, t); assert(h.open() && !p.paused());          // game over: no pause
+    h.toggle(p, w.session, t); assert(!h.open());
+
+    for (Collision c : {Collision::WALL, Collision::SELF, Collision::NONE}) assert(!gameOverReason(c).empty());
+
+    const sf::Color dimmed(2, 2, 3);                                     // board under an overlay
+    assert(contrastRatio(sf::Color::Black, sf::Color::White) > 20.9);
+    assert(contrastRatio(ui::MUTED, ui::BG) >= 4.5);
+    assert(contrastRatio(ui::MUTED, ui::CARD) >= 4.5);
+    assert(contrastRatio(sf::Color::White, ui::CARD) >= 4.5);
+    assert(contrastRatio(ui::GOLD, ui::CARD) >= 4.5);
+    assert(contrastRatio(ui::LIGHT, dimmed) >= 4.5);
+    assert(contrastRatio(ui::GOLD, dimmed) >= 4.5);
+    assert(contrastRatio(ui::GREEN, ui::BG) >= 3.0);                     // large title text
+    assert(contrastRatio(ui::BG, ui::GOLD) >= 4.5);                      // "NEW!" badge
+    std::cout << "US-18 OK: intro >= 3 s, help lists every control and pauses, WCAG contrast met (muted text "
+              << fmtMs(contrastRatio(ui::MUTED, ui::BG)) << ":1)\n";
+}
+
+// ===================== US-19: Validate Portability and Architecture (NFR-6, NFR-7) =====================
+// NFR-7 - the game is split into the four layers of the SADS; each layer only calls the one below:
+//   Presentation : InputHandler (SFML events -> commands), Renderer (GameSnapshot -> pixels)
+//   Application  : GameController (INTRO / RUNNING / PAUSED / GAME_OVER, tick timing, sessions)
+//   Domain       : GameEngine (grid, snake, food, score, rules) - no window, drawing or file code
+//   Persistence  : HighScoreManager (highscore.dat, load + atomic save)
+//   The Renderer only gets a read-only GameSnapshot copy, never the live game objects.
+// NFR-6 - portable C++17 + SFML 3 only: no OS headers, std::filesystem for paths,
+//   std::chrono for time, plain-text high-score file, font search for Windows / Linux / macOS,
+//   CMakeLists.txt for any compiler. The self-test runs the whole game headless (no window).
+enum class PlayState { INTRO, RUNNING, PAUSED, GAME_OVER };
+inline const char* playStateName(PlayState s) {
+    switch (s) { case PlayState::INTRO: return "INTRO"; case PlayState::RUNNING: return "RUNNING";
+                 case PlayState::PAUSED: return "PAUSED"; default: return "GAME_OVER"; }
+}
+
+inline const char* platformName() {
+#if defined(_WIN32)
+    return "Windows";
+#elif defined(__APPLE__)
+    return "macOS";
+#elif defined(__linux__)
+    return "Linux";
+#else
+    return "unknown platform";
+#endif
+}
+inline std::string buildInfo() {
+    std::ostringstream o;
+    o << platformName() << ", ";
+#if defined(_MSC_VER)
+    o << "MSVC " << _MSC_VER;
+#elif defined(__clang__)
+    o << "clang " << __clang_major__ << "." << __clang_minor__;
+#elif defined(__GNUC__)
+    o << "g++ " << __GNUC__ << "." << __GNUC_MINOR__;
+#else
+    o << "unknown compiler";
+#endif
+    o << ", C++" << (__cplusplus / 100 % 100) << ", SFML " << SFML_VERSION_MAJOR << "." << SFML_VERSION_MINOR
+      << "." << SFML_VERSION_PATCH;
+    return o.str();
+}
+
+// Read-only picture of the game handed to the Renderer (Game State Service).
+struct GameSnapshot {
+    std::deque<Position> body;
+    Direction heading = Direction::RIGHT;
+    Position food{};
+    int score = 0, best = 0;
+    bool newBest = false, savedNewBest = false;
+    PlayState state = PlayState::INTRO;
+    Collision cause = Collision::NONE;
+    int introSecondsLeft = 0;
+    bool helpOpen = false, perfOpen = false;
+    std::string message;
+};
+
+// ---------- Domain layer: GameEngine (Game Logic Service) ----------
+class GameEngine {
+public:
+    explicit GameEngine(unsigned seed = std::random_device{}()) : world_(seed) { reset(); }
+    void reset() { startWorld(world_); queue_.clear(); }                   // FR-1 .. FR-3
+    bool setHeading(Direction d) { return world_.session.canMove() && queue_.push(world_.snake, d); }   // FR-4
+    bool tick() {                                                           // FR-5 .. FR-9
+        if (!world_.session.canMove()) return false;
+        queue_.applyNext(world_.snake);
+        return tickWorld(world_);
+    }
+    // Places the apple on a free cell (used by tests and screenshot scripts).
+    bool setFood(Position p) {
+        if (!world_.grid.inBounds(p) || world_.grid.isOccupied(p)) return false;
+        world_.food = p;
+        return true;
+    }
+    bool isOver() const { return world_.session.isOver(); }
+    int score() const { return world_.session.isOver() ? world_.session.finalScore() : world_.score.value(); }
+    const World& world() const { return world_; }
+private:
+    World world_;
+    DirectionQueue queue_;
+};
+
+// ---------- Persistence layer: HighScoreManager (High Score Service) ----------
+class HighScoreManager {
+public:
+    explicit HighScoreManager(std::filesystem::path p = "highscore.dat") : path_(std::move(p)) {}
+    int load() {                                                            // FR-13
+        const auto r = readHighScore(path_.string());
+        best_ = r.value;
+        status_ = r.status;
+        return best_;
+    }
+    int finalizeSession(int finalScore) {                                   // FR-14
+        best_ = ::finalizeSession(path_.string(), best_, finalScore);
+        return best_;
+    }
+    int best() const { return best_; }
+    LoadStatus status() const { return status_; }
+    const std::filesystem::path& path() const { return path_; }
+private:
+    std::filesystem::path path_;
+    int best_ = 0;
+    LoadStatus status_ = LoadStatus::MISSING;
+};
+
+// ---------- Application layer: GameController (Game Command + Game State Service) ----------
+class GameController {
+public:
+    GameController(GameEngine& e, HighScoreManager& h) : engine_(e), scores_(h) {
+        exit_.setOnExit([this] { endSession(); });                          // FR-12: save on quit
+    }
+    GameController(const GameController&) = delete;                       // the exit hook holds 'this'
+    GameController& operator=(const GameController&) = delete;
+    void start(bool showIntro = true) {
+        scores_.load();
+        newGame();
+        intro_.reset();
+        if (!showIntro) intro_.update(IntroScreen::MIN_MS);
+    }
+    // --- commands ---
+    void submitDirection(Direction d) { if (state() == PlayState::RUNNING) engine_.setHeading(d); }
+    void togglePause() { if (!intro_.visible() && !help_.open()) pause_.toggle(engine_.world().session, timer_); }
+    void toggleHelp() { if (!intro_.visible()) help_.toggle(pause_, engine_.world().session, timer_); }
+    void togglePerf() { perfOpen_ = !perfOpen_; }
+    void focusLost() { if (state() == PlayState::RUNNING) pause_.pause(engine_.world().session, timer_); }
+    bool requestRestart() {
+        if (intro_.visible() || help_.open() || !canRestart(engine_.world().session, pause_)) return false;
+        endSession();                                    // a run abandoned from pause still counts
+        newGame();
+        return true;
+    }
+    void requestExit(ExitReason r) { exit_.request(r); }
+    bool exitRequested() const { return exit_.requested(); }
+
+    // Called once per frame with the elapsed milliseconds.
+    void update(int dtMs) {
+        if (intro_.visible()) {
+            intro_.update(dtMs);
+            if (!intro_.visible()) timer_.reset();
+            return;
+        }
+        if (state() != PlayState::RUNNING || !timer_.update(dtMs)) return;
+        Stopwatch sw;
+        const bool ended = engine_.tick();
+        tickPerf_.add(sw.ms());
+        display_.update(engine_.score());
+        if (ended) endSession();
+    }
+
+    PlayState state() const {
+        if (intro_.visible()) return PlayState::INTRO;
+        if (engine_.isOver()) return PlayState::GAME_OVER;
+        if (pause_.paused()) return PlayState::PAUSED;
+        return PlayState::RUNNING;
+    }
+    GameSnapshot getSnapshot() const {
+        const World& w = engine_.world();
+        GameSnapshot s;
+        s.body = w.snake.body();
+        s.heading = w.snake.heading();
+        s.food = w.food;
+        s.score = engine_.score();
+        s.best = display_.shown();
+        s.newBest = display_.newBest();
+        s.savedNewBest = savedNewBest_;
+        s.state = state();
+        s.cause = w.session.cause();
+        s.introSecondsLeft = intro_.secondsLeft();
+        s.helpOpen = help_.open();
+        s.perfOpen = perfOpen_;
+        s.message = message_;
+        return s;
+    }
+    const PerfMonitor& tickPerf() const { return tickPerf_; }
+    PerfMonitor& framePerf() { return framePerf_; }
+    const HighScoreManager& scores() const { return scores_; }
+
+private:
+    void newGame() {
+        engine_.reset();
+        timer_.reset();
+        pause_.reset();
+        sessionSaved_ = savedNewBest_ = false;
+        display_.setStored(scores_.best());
+        display_.update(0);
+        message_ = "Arrows / WASD to move";
+    }
+    void endSession() {                                                     // FR-14, once per session
+        if (sessionSaved_) return;
+        sessionSaved_ = true;
+        const int before = scores_.best();
+        scores_.finalizeSession(engine_.score());
+        savedNewBest_ = scores_.best() > before;
+        message_ = savedNewBest_ ? "New high score saved!" : "Game over";
+    }
+
+    GameEngine& engine_;
+    HighScoreManager& scores_;
+    TickTimer timer_;
+    PauseControl pause_;
+    IntroScreen intro_;
+    HelpOverlay help_;
+    ExitControl exit_;
+    HighScoreDisplay display_;
+    PerfMonitor tickPerf_, framePerf_;
+    bool perfOpen_ = false, sessionSaved_ = false, savedNewBest_ = false;
+    std::string message_;
+};
+
+// ---------- Presentation layer: InputHandler ----------
+class InputHandler {
+public:
+    // Translates one window event into a controller call. Unknown keys are ignored (NFR-3).
+    void handle(const sf::Event& ev, GameController& c) {
+        if (ev.is<sf::Event::Closed>()) { c.requestExit(ExitReason::WINDOW_CLOSED); return; }
+        if (ev.is<sf::Event::FocusLost>()) { c.focusLost(); return; }
+        const auto* key = ev.getIf<sf::Event::KeyPressed>();
+        if (!key) return;
+        if (isHelpKey(key->code)) { c.toggleHelp(); return; }
+        const Command cmd = commandForKey(key->code);
+        switch (cmd) {
+            case Command::NONE:    ++ignored_; break;
+            case Command::PAUSE:   c.togglePause(); break;
+            case Command::RESTART: c.requestRestart(); break;
+            case Command::EXIT:    c.requestExit(ExitReason::ESCAPE_KEY); break;
+            case Command::PERF:    c.togglePerf(); break;
+            default:               c.submitDirection(*commandDirection(cmd)); break;
+        }
+    }
+    int ignored() const { return ignored_; }
+private:
+    int ignored_ = 0;
+};
+
+// ---------- Presentation layer: Renderer ----------
+class Renderer {
+public:
+    bool init() { return hud_.load(); }
+    void draw(sf::RenderTarget& t, const GameSnapshot& s, const PerfMonitor& frame, const PerfMonitor& tick) {
+        t.clear(ui::BG);
+        std::string subtitle = s.message, hint;
+        switch (s.state) {
+            case PlayState::INTRO:     subtitle = "Get ready...";
+                                       hint = "Esc: quit"; break;
+            case PlayState::RUNNING:   hint = "Move: arrows/WASD   P/Space: pause   H: help   Esc: quit"; break;
+            case PlayState::PAUSED:    subtitle = "Paused";
+                                       hint = "P/Space: resume   R: restart   H: help   Esc: quit"; break;
+            case PlayState::GAME_OVER: hint = "R: play again   H: help   Esc: quit"; break;
+        }
+        hud_.draw(t, s.score, s.best, subtitle);
+        if (s.newBest) ui::drawNewBestBadge(t, hud_);
+        hud_.hint(t, hint);
+        ui::drawBoard(t);
+        ui::drawApple(t, s.food);
+        ui::drawSnake(t, s.body, s.heading);
+
+        if (s.state == PlayState::INTRO) {
+            ui::drawControls(t, hud_, "SNAKE", "Starting in " + std::to_string(s.introSecondsLeft) + "...");
+        } else if (s.helpOpen) {
+            ui::drawControls(t, hud_, "CONTROLS", "Press H to close");
+        } else if (s.state == PlayState::GAME_OVER) {
+            hud_.overlay(t, s.cause == Collision::NONE ? "YOU WIN" : "GAME OVER",
+                         gameOverReason(s.cause) + "   -   score " + std::to_string(s.score));
+            if (s.savedNewBest) hud_.centered(t, "NEW HIGH SCORE!", 20, ui::GOLD, 312, true);
+            hud_.centered(t, "R to play again   -   Esc to quit", 14, ui::MUTED, 352);
+        } else if (s.state == PlayState::PAUSED) {
+            hud_.overlay(t, "PAUSED", "P / Space to resume   -   R to restart   -   H for help");
+        }
+        if (s.perfOpen) ui::drawPerfPanel(t, hud_, frame, tick);
+    }
+private:
+    ui::Hud hud_;
+};
+
+static void testUS19() {
+    highScoreWarnings() = false;
+    namespace fs = std::filesystem;
+    assert(!std::string(platformName()).empty() && !buildInfo().empty());
+    const fs::path file = fs::temp_directory_path() / "snake_us19_test.dat";
+    std::error_code ec;
+    fs::remove(file, ec);
+
+    // Whole game driven through the layers, headless: no window, no font, no SFML drawing.
+    GameEngine engine(19);
+    HighScoreManager scores(file);
+    GameController game(engine, scores);
+    game.start();
+    assert(game.state() == PlayState::INTRO && scores.status() == LoadStatus::MISSING && scores.best() == 0);
+    game.submitDirection(Direction::UP);                                   // ignored during intro
+    game.update(1500); assert(game.state() == PlayState::INTRO);
+    game.update(1500); assert(game.state() == PlayState::RUNNING);
+    const GameSnapshot before = game.getSnapshot();
+    assert(before.body.size() == 3 && before.heading == Direction::RIGHT && before.score == 0);
+
+    engine.setFood({0, 0});
+    game.update(150);
+    assert(engine.world().snake.head() == (Position{11, 10}));
+    assert(before.body.front() == (Position{10, 10}));                     // snapshot is a copy
+    game.togglePause(); assert(game.state() == PlayState::PAUSED);
+    game.update(5000);  assert(engine.world().snake.head() == (Position{11, 10}));
+    game.toggleHelp();  assert(game.getSnapshot().helpOpen && game.state() == PlayState::PAUSED);
+    game.toggleHelp();  assert(game.state() == PlayState::PAUSED);           // user's pause kept
+    game.togglePause(); assert(game.state() == PlayState::RUNNING);
+
+    for (int i = 0; i < 2; ++i) { assert(engine.setFood(nextHead(engine.world().snake))); game.update(150); }
+    assert(game.getSnapshot().score == 20 && game.getSnapshot().newBest);
+    engine.setFood({0, 0});
+    while (game.state() == PlayState::RUNNING) game.update(150);           // into the right wall
+    assert(game.state() == PlayState::GAME_OVER && game.getSnapshot().savedNewBest);
+    assert(scores.best() == 20 && loadHighScore(file.string()) == 20);       // saved at game over
+
+    assert(game.requestRestart() && game.state() == PlayState::RUNNING);   // no intro on restart
+    assert(game.getSnapshot().score == 0 && game.getSnapshot().best == 20 && !game.getSnapshot().newBest);
+    for (int i = 0; i < 3; ++i) { assert(engine.setFood(nextHead(engine.world().snake))); game.update(150); }
+    game.togglePause();
+
+    // Presentation layer with synthetic events: Q ignored, close button quits and saves.
+    InputHandler input;
+    input.handle(sf::Event(sf::Event::KeyPressed{sf::Keyboard::Key::Q}), game);
+    assert(input.ignored() == 1 && !game.exitRequested());
+    input.handle(sf::Event(sf::Event::Closed{}), game);
+    assert(game.exitRequested() && scores.best() == 30 && loadHighScore(file.string()) == 30);
+
+    HighScoreManager reload(file);                                         // next launch sees it
+    assert(reload.load() == 30 && reload.status() == LoadStatus::OK);
+    fs::remove(file, ec);
+    highScoreWarnings() = true;
+    std::cout << "US-19 OK: 4 layers drive a full game headless (" << buildInfo() << ")\n";
+}
+
+// The complete game loop: Presentation -> Application -> Domain -> Persistence.
+static int runGame(int argc, char** argv, const std::string& title) {
+    namespace fs = std::filesystem;
+    const std::string shot = ui::argValue(argc, argv, "--shot");
+    const fs::path shotFile = fs::temp_directory_path() / "snake_shot_highscore.dat";
+    if (!shot.empty()) { std::ofstream o(shotFile, std::ios::trunc); o << "30\n"; }
+
+    GameEngine engine(shot.empty() ? std::random_device{}() : 7u);
+    HighScoreManager scores(shot.empty() ? fs::path("highscore.dat") : shotFile);
+    GameController game(engine, scores);
+    game.start(shot.empty());
+    if (scores.status() != LoadStatus::OK && scores.status() != LoadStatus::MISSING)
+        std::cerr << "[info] high score file was " << loadStatusName(scores.status()) << ", starting from 0\n";
+
+    auto window = makeWindow(title);
+    Renderer renderer;
+    if (!renderer.init()) { std::cerr << "Error: could not load a font\n"; return 1; }
+    InputHandler input;
+
+    if (!shot.empty()) {                                       // screenshot: a short scripted game
+        for (int i = 0; i < 5; ++i) { engine.setFood(nextHead(engine.world().snake)); game.update(150); }
+        game.submitDirection(Direction::UP);
+        for (int i = 0; i < 3; ++i) game.update(150);
+        engine.setFood({13, 6});
+    }
+
+    sf::Clock frame;
+    int drawn = 0;
+    while (window.isOpen()) {
+        while (const std::optional ev = window.pollEvent()) input.handle(*ev, game);
+        if (game.exitRequested()) { window.close(); break; }
+        game.update(frame.restart().asMilliseconds());
+
+        Stopwatch draw;                                        // NFR-1: time to draw one frame
+        renderer.draw(window, game.getSnapshot(), game.framePerf(), game.tickPerf());
+        if (++drawn > 5) game.framePerf().add(draw.ms());   // skip warm-up frames (glyphs built on first use)
+        window.display();
+        if (!shot.empty()) { ui::saveShot(window, shot); window.close(); }
+    }
+    if (!shot.empty()) { std::error_code ec; fs::remove(shotFile, ec); return 0; }
+    const auto& f = game.framePerf();
+    const auto& t = game.tickPerf();
+    std::cout << "Frames drawn: " << f.total() << ", worst draw " << fmtMs(f.worstEver()) << " ms (NFR-1 budget 33) "
+              << (f.within(FRAME_BUDGET_MS) ? "PASS" : "OVER") << "\n"
+              << "Ticks run:    " << t.total() << ", worst tick " << fmtMs(t.worstEver()) << " ms (NFR-2 budget 50) "
+              << (t.within(TICK_BUDGET_MS) ? "PASS" : "OVER") << "\n"
+              << "High score:   " << scores.best() << " (" << scores.path().string() << ")\n";
+    return 0;
+}
+
+// Self-test: sprint-1 regression, then every sprint-2 story up to this one.
+static void selfTest() {
+    testSprint1();
+    testUS10();
+    testUS11();
+    testUS12();
+    testUS13();
+    testUS14();
+    testUS15();
+    testUS16();
+    testUS17();
+    testUS18();
+    testUS19();
+}
+
+int main(int argc, char** argv) {
+    selfTest();
+    if (ui::hasFlag(argc, argv, "--test")) return 0;
+    std::cout << "Build: " << buildInfo() << "\n";
+    return runGame(argc, argv, "US-19 Portability and Architecture");
+}
