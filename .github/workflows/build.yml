@@ -1,0 +1,60 @@
+# Builds every user-story file and runs its self-test on every push and pull request.
+name: Build and test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libx11-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libudev-dev libgl1-mesa-dev libfreetype-dev
+
+      - name: Cache SFML 3
+        id: sfml-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sfml-install
+          key: sfml-3.0.1-ubuntu-24.04
+
+      - name: Build SFML 3.0.1 (Ubuntu only ships SFML 2.6)
+        if: steps.sfml-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch 3.0.1 https://github.com/SFML/SFML.git ~/sfml-src
+          cmake -S ~/sfml-src -B ~/sfml-build -DCMAKE_BUILD_TYPE=Release \
+            -DSFML_BUILD_AUDIO=OFF -DSFML_BUILD_NETWORK=OFF -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_INSTALL_PREFIX=$HOME/sfml-install
+          cmake --build ~/sfml-build -j4
+          cmake --install ~/sfml-build
+
+      - name: Build every story and run its self-test
+        run: |
+          SFML=$HOME/sfml-install
+          export LD_LIBRARY_PATH=$SFML/lib
+          mkdir -p bin
+          for f in features/*.cpp; do
+            n=$(basename "$f" .cpp)
+            echo "::group::$n"
+            g++ -std=c++17 -Wall -Wextra "$f" -o "bin/$n" -I"$SFML/include" -L"$SFML/lib" \
+              -lsfml-graphics -lsfml-window -lsfml-system
+            ./bin/"$n" --test
+            echo "::endgroup::"
+          done
+          ./bin/US19_validate_portability_and_architecture --test > self_test_results.txt
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-test-results
+          path: self_test_results.txt
