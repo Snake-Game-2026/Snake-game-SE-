@@ -1,4 +1,4 @@
-// US-14 - Update and Persist High Score (FR-14, SEC-1, SO-1, NFR-4)  [GitHub #48, Done]
+// US-14 - Update and Persist High Score (FR-14, SEC-1, SO-1, NFR-4)  [GitHub #48, Todo]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US14_update_and_persist_high_score.cpp -o US14_update_and_persist_high_score -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US14_update_and_persist_high_score              (self-test runs first, then the demo window)

@@ -1,4 +1,4 @@
-// US-06 - Food Consumption and Growth (FR-6)  [GitHub #40, Done]
+// US-06 - Food Consumption and Growth (FR-6)  [GitHub #40, Todo]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US06_food_consumption_and_growth.cpp -o US06_food_consumption_and_growth -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US06_food_consumption_and_growth            (opens the demo window; self-test runs first)

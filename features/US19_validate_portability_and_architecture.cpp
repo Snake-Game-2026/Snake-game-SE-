@@ -1,4 +1,4 @@
-// US-19 - Validate Portability and Architecture (NFR-6, NFR-7)  [GitHub #53, Done]
+// US-19 - Validate Portability and Architecture (NFR-6, NFR-7)  [GitHub #53, Todo]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US19_validate_portability_and_architecture.cpp -o US19_validate_portability_and_architecture -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US19_validate_portability_and_architecture              (self-test runs first, then the demo window)

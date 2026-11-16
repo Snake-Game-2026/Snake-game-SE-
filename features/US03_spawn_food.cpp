@@ -1,4 +1,4 @@
-// US-03 - Spawn Food (FR-3)  [GitHub #37, Done]
+// US-03 - Spawn Food (FR-3)  [GitHub #37, In Progress]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US03_spawn_food.cpp -o US03_spawn_food -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US03_spawn_food            (opens the demo window; self-test runs first)

@@ -1,4 +1,4 @@
-// US-11 - Restart Game (FR-11)  [GitHub #45, Done]
+// US-11 - Restart Game (FR-11)  [GitHub #45, In Progress]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US11_restart_game.cpp -o US11_restart_game -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US11_restart_game              (self-test runs first, then the demo window)

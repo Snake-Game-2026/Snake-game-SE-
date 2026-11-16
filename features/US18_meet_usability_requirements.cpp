@@ -1,4 +1,4 @@
-// US-18 - Meet Usability Requirements (NFR-5)  [GitHub #52, Done]
+// US-18 - Meet Usability Requirements (NFR-5)  [GitHub #52, Todo]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US18_meet_usability_requirements.cpp -o US18_meet_usability_requirements -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US18_meet_usability_requirements              (self-test runs first, then the demo window)

@@ -1,4 +1,4 @@
-// US-13 - Load High Score (FR-13, SEC-2, SEC-3, SO-3)  [GitHub #47, Done]
+// US-13 - Load High Score (FR-13, SEC-2, SEC-3, SO-3)  [GitHub #47, Todo]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US13_load_high_score.cpp -o US13_load_high_score -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US13_load_high_score              (self-test runs first, then the demo window)

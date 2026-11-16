@@ -19,7 +19,6 @@
 ![Stories](https://img.shields.io/badge/user%20stories-19%2F19-brightgreen?style=for-the-badge)
 ![Sprints](https://img.shields.io/badge/sprints-2%2F2%20done-success?style=for-the-badge)
 ![Status](https://img.shields.io/badge/snake-hungry-red?style=for-the-badge)
-[![Build and test](https://github.com/Snake-Game-2026/Snake-game-SE-/actions/workflows/build.yml/badge.svg)](https://github.com/Snake-Game-2026/Snake-game-SE-/actions/workflows/build.yml)
 
 **A classic single-player Snake game, built story by story across two sprints on a four-layer architecture.**
 *Because even a snake deserves an IEEE 1016 design spec.*
@@ -66,18 +65,14 @@ This isn't just a weekend hack. It's a full **Software Engineering mini-project*
 ### Install SFML
 
 ```bash
-# Ubuntu / Debian: apt's libsfml-dev is SFML 2.6 on Ubuntu 24.04, which won't build this code.
-# Build SFML 3 from source instead (the CI workflow does exactly this):
-git clone --depth 1 --branch 3.0.1 https://github.com/SFML/SFML.git
-cmake -S SFML -B SFML/build -DSFML_BUILD_AUDIO=OFF -DSFML_BUILD_NETWORK=OFF -DBUILD_SHARED_LIBS=ON
-cmake --build SFML/build -j4 && sudo cmake --install SFML/build && sudo ldconfig
+# Ubuntu / Debian (check that your distro ships SFML 3)
+sudo apt install libsfml-dev
 
 # macOS
 brew install sfml
 
-# Windows (MSYS2 UCRT64 shell): the g++ and SFML packages match each other
-pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sfml
-# then add C:\msys64\ucrt64\bin to PATH
+# Windows
+# Download from sfml-dev.org, or: vcpkg install sfml
 ```
 
 ### Build & Run
@@ -93,17 +88,6 @@ g++ -std=c++17 US19_validate_portability_and_architecture.cpp -o snake \
 
 ./snake      # 🐍 let's go
 ```
-
-Build and self-test **every** story at once:
-
-```bash
-sh scripts/run_self_tests.sh          # Linux / macOS
-scripts\run_self_tests.bat           # Windows
-# or with CMake:
-cmake -S . -B build && cmake --build build && ctest --test-dir build
-```
-
-Every push and pull request runs the same build and self-tests on GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)).
 
 <details>
 <summary><b>🛠️ Extra command-line flags</b></summary>
@@ -326,7 +310,6 @@ Tested at every level: **unit → integration → system → acceptance**, plus 
 | 🔗 Integration Testing | | [`DOCS2`](DOCS2) |
 | 🖥️ System Testing | | [`DOCS2`](DOCS2) |
 | 🤝 Acceptance Testing | | [`DOCS2`](DOCS2) |
-| 🔀 Deviations from SRS / SADS | | [`Docs/Deviations.md`](Docs/Deviations.md) |
 
 ---
 
@@ -334,12 +317,9 @@ Tested at every level: **unit → integration → system → acceptance**, plus 
 
 ```
 Snake-game-SE-/
-├── 📂 .github/           CI workflow (build + self-tests) and PR template
-├── 📂 Docs/              SRS, Architecture & Design Spec, Test Plan, Deviations
+├── 📂 Docs/              SRS, Architecture & Design Spec, Test Plan
 ├── 📂 DOCS2/             Unit, Integration, System & Acceptance testing docs
 ├── 📂 features/          US01 … US19, one cumulative build per user story
-├── 📂 scripts/           run_self_tests.sh / .bat: build and self-test every story
-├── 📄 CMakeLists.txt     portable build for any compiler (ctest runs the self-tests)
 ├── 🎬 Sprint_1_demo.mp4
 ├── 🎬 Sprint2_demo.mp4
 └── 📄 README.md

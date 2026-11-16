@@ -1,4 +1,4 @@
-// US-09 - Game Over (FR-9)  [GitHub #43, Done]
+// US-09 - Game Over (FR-9)  [GitHub #43, Todo]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US09_game_over.cpp -o US09_game_over -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US09_game_over            (opens the demo window; self-test runs first)

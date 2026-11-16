@@ -1,4 +1,4 @@
-// US-10 - Pause and Resume Game (FR-10)  [GitHub #44, Done]
+// US-10 - Pause and Resume Game (FR-10)  [GitHub #44, In Progress]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US10_pause_and_resume_game.cpp -o US10_pause_and_resume_game -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US10_pause_and_resume_game              (self-test runs first, then the demo window)

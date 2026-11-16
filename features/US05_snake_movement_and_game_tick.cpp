@@ -1,4 +1,4 @@
-// US-05 - Snake Movement and Game Tick (FR-5)  [GitHub #39, Done]
+// US-05 - Snake Movement and Game Tick (FR-5)  [GitHub #39, Todo]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US05_snake_movement_and_game_tick.cpp -o US05_snake_movement_and_game_tick -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US05_snake_movement_and_game_tick            (opens the demo window; self-test runs first)

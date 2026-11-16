@@ -1,4 +1,4 @@
-// US-08 - Collision Detection (FR-8)  [GitHub #42, Done]
+// US-08 - Collision Detection (FR-8)  [GitHub #42, Todo]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US08_collision_detection.cpp -o US08_collision_detection -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US08_collision_detection            (opens the demo window; self-test runs first)

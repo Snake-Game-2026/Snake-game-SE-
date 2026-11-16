@@ -1,4 +1,4 @@
-// US-02 - Initialize Snake (FR-2)  [GitHub #36, Done]
+// US-02 - Initialize Snake (FR-2)  [GitHub #36, In Progress]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US02_initialize_snake.cpp -o US02_initialize_snake -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US02_initialize_snake            (opens the demo window; self-test runs first)

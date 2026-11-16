@@ -1,4 +1,4 @@
-// US-01 - Initialize Game Grid (FR-1)  [GitHub #35, Done]
+// US-01 - Initialize Game Grid (FR-1)  [GitHub #35, In Progress]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US01_initialize_game_grid.cpp -o US01_initialize_game_grid -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US01_initialize_game_grid            (opens the demo window; self-test runs first)

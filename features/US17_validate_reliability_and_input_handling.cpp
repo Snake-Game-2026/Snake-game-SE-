@@ -1,4 +1,4 @@
-// US-17 - Validate Reliability and Input Handling (NFR-3, SO-2, SEC-3, SEC-4)  [GitHub #51, Done]
+// US-17 - Validate Reliability and Input Handling (NFR-3, SO-2, SEC-3, SEC-4)  [GitHub #51, Todo]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US17_validate_reliability_and_input_handling.cpp -o US17_validate_reliability_and_input_handling -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US17_validate_reliability_and_input_handling              (self-test runs first, then the demo window)

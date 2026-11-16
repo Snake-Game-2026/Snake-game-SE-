@@ -1,4 +1,4 @@
-// US-07 - Display Live Score (FR-7)  [GitHub #41, Done]
+// US-07 - Display Live Score (FR-7)  [GitHub #41, Todo]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US07_display_live_score.cpp -o US07_display_live_score -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US07_display_live_score            (opens the demo window; self-test runs first)

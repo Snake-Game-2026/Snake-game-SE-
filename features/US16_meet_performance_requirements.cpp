@@ -1,4 +1,4 @@
-// US-16 - Meet Performance Requirements (NFR-1, NFR-2)  [GitHub #50, Done]
+// US-16 - Meet Performance Requirements (NFR-1, NFR-2)  [GitHub #50, Todo]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US16_meet_performance_requirements.cpp -o US16_meet_performance_requirements -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US16_meet_performance_requirements              (self-test runs first, then the demo window)

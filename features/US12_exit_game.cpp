@@ -1,4 +1,4 @@
-// US-12 - Exit Game (FR-12)  [GitHub #46, Done]
+// US-12 - Exit Game (FR-12)  [GitHub #46, Todo]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US12_exit_game.cpp -o US12_exit_game -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US12_exit_game              (self-test runs first, then the demo window)

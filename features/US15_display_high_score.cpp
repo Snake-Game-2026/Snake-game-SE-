@@ -1,4 +1,4 @@
-// US-15 - Display High Score (FR-15)  [GitHub #49, Done]
+// US-15 - Display High Score (FR-15)  [GitHub #49, Todo]
 // Sprint 2 - Snake Game (PES University, UE23CS341A). SFML 3.x, C++17
 // Build: g++ -std=c++17 US15_display_high_score.cpp -o US15_display_high_score -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US15_display_high_score              (self-test runs first, then the demo window)

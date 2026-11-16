@@ -1,4 +1,4 @@
-// US-04 - Directional Keyboard Control (FR-4)  [GitHub #38, Done]
+// US-04 - Directional Keyboard Control (FR-4)  [GitHub #38, Todo]
 // SFML 3.x, C++17
 // Build: g++ -std=c++17 US04_directional_keyboard_control.cpp -o US04_directional_keyboard_control -lsfml-graphics -lsfml-window -lsfml-system
 // Run:   ./US04_directional_keyboard_control            (opens the demo window; self-test runs first)
